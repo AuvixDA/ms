@@ -135,7 +135,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
         data: { hiddenAt: null },
       });
       joinUserToConversation(req.userId, existing.id);
-      return res.json({ conversation: existing, alreadyExisted: true });
+      return res.json({ conversation: serializeConversation(existing, req.userId), alreadyExisted: true });
     }
   }
 
@@ -157,7 +157,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
   allParticipantIds.forEach((userId) => joinUserToConversation(userId, conversation.id));
   getIo()?.to(`conversation:${conversation.id}`).emit('conversation:new', { conversationId: conversation.id });
 
-  res.status(201).json({ conversation });
+  res.status(201).json({ conversation: serializeConversation(conversation, req.userId) });
 }));
 
 // Details for a single conversation (used for the chat header and group info panel).

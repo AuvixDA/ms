@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../prisma');
 const { requireAuth } = require('../middleware/auth');
+const { getIo } = require('../socket');
 const asyncHandler = require('../asyncHandler');
 
 const router = express.Router();
@@ -44,6 +45,18 @@ router.patch('/me', requireAuth, asyncHandler(async (req, res) => {
     where: { id: req.userId },
     data: { avatarUrl: avatarUrl || null },
     select: PUBLIC_USER_FIELDS,
+  });
+
+  // Without this, everyone already sharing a conversation with this user only sees their
+  // new avatar after their next reload — the participant list embedded in each open chat
+  // is a snapshot from whenever it was last fetched.
+  const memberships = await prisma.conversationParticipant.findMany({
+    where: { userId: req.userId },
+    select: { conversationId: true },
+  });
+  const io = getIo();
+  memberships.forEach((m) => {
+    io?.to(`conversation:${m.conversationId}`).emit('conversation:updated', { conversationId: m.conversationId });
   });
 
   res.json({ user });

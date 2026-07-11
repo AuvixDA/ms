@@ -161,6 +161,16 @@ body {
     border: 1px solid var(--msg-bubble-border, rgb(255 255 255 / 0.1));
   }
 
+  /* Message bubbles use our own long-press/right-click menu instead of the browser's native
+     text-selection and "Copy/Look Up" callout — this suppresses both so they don't fight
+     each other. Copying text is available from that menu instead (see ChatWindow's mobile
+     action sheet). */
+  .no-native-selection {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
   .icon-btn {
     display: inline-flex;
     align-items: center;

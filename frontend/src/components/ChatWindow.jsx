@@ -8,6 +8,7 @@ import {
   Check,
   CheckCheck,
   Clock,
+  Copy,
   FileIcon,
   Forward,
   Loader2,
@@ -746,8 +747,11 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   }
 
   function openBubbleContextMenu(e, m, deleted, pending, editing) {
-    if (deleted || pending || editing) return;
+    // Always suppress the browser's own right-click menu on a message bubble — even when
+    // there's nothing for our own menu to show (deleted/pending/editing), the native
+    // "View page source / Save image as" menu looks broken there, not just unwanted.
     e.preventDefault();
+    if (deleted || pending || editing) return;
     setMobileActionsFor(m);
   }
 
@@ -938,6 +942,11 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           const deleted = !!m.deletedAt;
           const showAvatar = !mine && (i === 0 || messages[i - 1].senderId !== m.senderId);
           const isImage = m.fileUrl && IMAGE_EXTENSIONS.test(m.fileUrl);
+          // A captionless photo bleeds to the bubble's edges (Telegram/WhatsApp-style)
+          // instead of sitting inside the same padding as text, which otherwise reads as a
+          // thick colored frame around the photo. Only safe when nothing else (sender name,
+          // forwarded label, reply preview) is rendered above it inside the bubble.
+          const imageIsFirstContent = isImage && !m.text && !m.replyTo && !m.forwardedFromName && !(!mine && showAvatar);
           const editing = editingId === m.id;
           const read = mine && !deleted && isReadByOthers(m, conversation);
           const isFresh = !initialLoadIdsRef.current.has(m.id);
@@ -1036,7 +1045,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                 onTouchCancel={cancelBubbleLongPress}
                 onClickCapture={suppressPostLongPressClick}
                 onContextMenu={(e) => openBubbleContextMenu(e, m, deleted, pending, editing)}
-                className={`max-w-[75%] md:max-w-md px-4 py-2.5 shadow-lg transition-all duration-300 rounded-2xl select-none md:select-text ${
+                className={`max-w-[75%] md:max-w-md px-4 py-2.5 shadow-lg transition-all duration-300 rounded-2xl no-native-selection ${
                   deleted
                     ? 'msg-bubble text-white/35 italic'
                     : mine
@@ -1100,12 +1109,14 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                       <button
                         type="button"
                         onClick={() => setLightboxImage({ src: resolveFileUrl(m.fileUrl), alt: m.fileName })}
-                        className="block mt-1"
+                        className={imageIsFirstContent ? '-mx-4 -mt-2.5 block w-[calc(100%+2rem)]' : 'block mt-1'}
                       >
                         <img
                           src={resolveFileUrl(m.fileUrl)}
                           alt={m.fileName || 'Фото'}
-                          className="max-w-full max-h-64 rounded-xl object-cover"
+                          className={`max-w-full max-h-64 object-cover ${
+                            imageIsFirstContent ? 'w-full rounded-t-2xl' : 'rounded-xl'
+                          }`}
                         />
                       </button>
                     )}
@@ -1367,11 +1378,11 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
       {mobileActionsFor && (
         <div
           onClick={() => setMobileActionsFor(null)}
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end justify-center z-[60] animate-fade-in md:hidden"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end justify-center z-[60] animate-fade-in"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="glass-card w-full max-w-md rounded-t-3xl p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] animate-slide-up"
+            className="glass-card w-full max-w-md rounded-t-3xl md:rounded-b-3xl p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:mb-6 animate-slide-up"
           >
             <div className="w-9 h-1 rounded-full bg-white/20 mx-auto mb-3" />
             <div className="flex items-center justify-center gap-2 pb-3 mb-2 border-b border-white/10">
@@ -1398,6 +1409,18 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
               <Reply size={18} />
               <span className="text-sm">Ответить</span>
             </button>
+            {mobileActionsFor.text && (
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(mobileActionsFor.text);
+                  setMobileActionsFor(null);
+                }}
+                className="w-full flex items-center gap-3 px-2 py-3 rounded-xl text-white/85 active:bg-white/5"
+              >
+                <Copy size={18} />
+                <span className="text-sm">Копировать текст</span>
+              </button>
+            )}
             <button
               onClick={() => {
                 setForwardingMessage(mobileActionsFor);
