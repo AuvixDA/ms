@@ -9,6 +9,28 @@ const router = express.Router();
 
 const MESSAGES_PAGE_SIZE = 50;
 
+// "Forever" is stored as a far-future timestamp rather than a separate column — every mute
+// check is just `muteUntil > now`, and the UI treats anything past MUTE_FOREVER_THRESHOLD
+// as unlimited instead of showing an absurd date.
+const MUTE_FOREVER = new Date('2099-12-31T00:00:00Z');
+const MUTE_DURATIONS_MS = { '1h': 60 * 60 * 1000, '8h': 8 * 60 * 60 * 1000 };
+
+function isMuted(participant) {
+  return !!participant?.muteUntil && new Date(participant.muteUntil) > new Date();
+}
+
+// A lightweight preview of the currently pinned message, in the same shape as a reply
+// preview — just enough for the pinned banner, not the full message.
+async function loadPinnedMessage(conversation) {
+  if (!conversation.pinnedMessageId) return null;
+  const m = await prisma.message.findUnique({
+    where: { id: conversation.pinnedMessageId },
+    include: { sender: { select: { id: true, name: true } } },
+  });
+  if (!m || m.deletedAt) return null;
+  return { id: m.id, senderId: m.senderId, senderName: m.sender?.name || null, text: m.text, fileName: m.fileName };
+}
+
 function serializeConversation(c, currentUserId) {
   const self = c.participants.find((p) => p.userId === currentUserId);
   const lastMessage = c.messages?.[0] ? serializeMessage(c.messages[0]) : null;
@@ -18,7 +40,9 @@ function serializeConversation(c, currentUserId) {
   return {
     id: c.id,
     isGroup: c.isGroup,
+    isSelf: c.isSelf,
     name: c.name,
+    avatarUrl: c.avatarUrl,
     ownerId: c.ownerId,
     participants: c.participants
       .filter((p) => p.userId !== currentUserId)
@@ -32,7 +56,7 @@ function serializeConversation(c, currentUserId) {
     lastMessage,
     unreadCount,
     archived: !!self?.archivedAt,
-    muted: !!self?.mutedAt,
+    muted: isMuted(self),
     lastReadAt: selfLastReadAt,
   };
 }
@@ -153,13 +177,76 @@ router.get('/:id', requireAuth, asyncHandler(async (req, res) => {
     return res.status(404).json({ error: 'Conversation not found' });
   }
 
+  const pinnedMessage = await loadPinnedMessage(conversation);
+  res.json({ conversation: { ...serializeConversation(conversation, req.userId), pinnedMessage } });
+}));
+
+// Find or create the current user's "Saved Messages" chat — a conversation with only
+// themselves as a participant, reusing the normal message/attachment/reply infrastructure.
+router.post('/saved-messages', requireAuth, asyncHandler(async (req, res) => {
+  let conversation = await prisma.conversation.findFirst({
+    where: { isSelf: true, participants: { some: { userId: req.userId } } },
+    include: { participants: { include: { user: true } } },
+  });
+
+  if (!conversation) {
+    conversation = await prisma.conversation.create({
+      data: {
+        isGroup: false,
+        isSelf: true,
+        participants: { create: [{ userId: req.userId }] },
+      },
+      include: { participants: { include: { user: true } } },
+    });
+    joinUserToConversation(req.userId, conversation.id);
+  }
+
   res.json({ conversation: serializeConversation(conversation, req.userId) });
 }));
 
-// Rename a group conversation.
+// Pin (or, with messageId: null, unpin) a message so it shows in the conversation's pinned
+// banner for every participant. Only one message can be pinned at a time — pinning a new
+// one replaces whatever was pinned before.
+router.post('/:id/pin', requireAuth, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { messageId } = req.body;
+
+  const membership = await requireMembership(id, req.userId);
+  if (!membership) {
+    return res.status(403).json({ error: 'Not a participant of this conversation' });
+  }
+
+  let pinnedMessageRow = null;
+  if (messageId) {
+    pinnedMessageRow = await prisma.message.findUnique({
+      where: { id: messageId },
+      include: { sender: { select: { id: true, name: true } } },
+    });
+    if (!pinnedMessageRow || pinnedMessageRow.conversationId !== id || pinnedMessageRow.deletedAt) {
+      return res.status(400).json({ error: 'Invalid message to pin' });
+    }
+  }
+
+  await prisma.conversation.update({ where: { id }, data: { pinnedMessageId: pinnedMessageRow?.id || null } });
+
+  const pinnedMessage = pinnedMessageRow
+    ? {
+        id: pinnedMessageRow.id,
+        senderId: pinnedMessageRow.senderId,
+        senderName: pinnedMessageRow.sender?.name || null,
+        text: pinnedMessageRow.text,
+        fileName: pinnedMessageRow.fileName,
+      }
+    : null;
+
+  getIo()?.to(`conversation:${id}`).emit('conversation:pin', { conversationId: id, pinnedMessage });
+  res.json({ pinnedMessage });
+}));
+
+// Rename a group conversation and/or change its avatar.
 router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { name } = req.body;
+  const { name, avatarUrl } = req.body;
 
   const membership = await requireMembership(id, req.userId);
   if (!membership) {
@@ -171,18 +258,29 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
     return res.status(404).json({ error: 'Conversation not found' });
   }
   if (!existing.isGroup) {
-    return res.status(400).json({ error: 'Only group conversations can be renamed' });
+    return res.status(400).json({ error: 'Only group conversations can be edited' });
   }
   if (existing.ownerId && existing.ownerId !== req.userId) {
-    return res.status(403).json({ error: 'Only the group owner can rename it' });
+    return res.status(403).json({ error: 'Only the group owner can edit it' });
   }
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'name is required' });
+
+  const data = {};
+  if (name !== undefined) {
+    if (!name.trim()) {
+      return res.status(400).json({ error: 'name is required' });
+    }
+    data.name = name.trim();
+  }
+  if (avatarUrl !== undefined) {
+    data.avatarUrl = avatarUrl || null;
+  }
+  if (Object.keys(data).length === 0) {
+    return res.status(400).json({ error: 'Nothing to update' });
   }
 
   const conversation = await prisma.conversation.update({
     where: { id },
-    data: { name: name.trim() },
+    data,
     include: { participants: { include: { user: true } } },
   });
 
@@ -191,9 +289,10 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 // Update the current user's own settings for a conversation: archive/unarchive, mute/unmute.
+// `mute` is `false`/`null` to unmute, or one of '1h' | '8h' | 'forever' to (re)mute.
 router.patch('/:id/settings', requireAuth, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { archived, muted } = req.body;
+  const { archived, mute } = req.body;
 
   const membership = await requireMembership(id, req.userId);
   if (!membership) {
@@ -202,14 +301,24 @@ router.patch('/:id/settings', requireAuth, asyncHandler(async (req, res) => {
 
   const data = {};
   if (typeof archived === 'boolean') data.archivedAt = archived ? new Date() : null;
-  if (typeof muted === 'boolean') data.mutedAt = muted ? new Date() : null;
+  if (mute !== undefined) {
+    if (!mute) {
+      data.muteUntil = null;
+    } else if (mute === 'forever') {
+      data.muteUntil = MUTE_FOREVER;
+    } else if (MUTE_DURATIONS_MS[mute]) {
+      data.muteUntil = new Date(Date.now() + MUTE_DURATIONS_MS[mute]);
+    } else {
+      return res.status(400).json({ error: 'Invalid mute value' });
+    }
+  }
 
   const updated = await prisma.conversationParticipant.update({
     where: { userId_conversationId: { userId: req.userId, conversationId: id } },
     data,
   });
 
-  res.json({ archived: !!updated.archivedAt, muted: !!updated.mutedAt });
+  res.json({ archived: !!updated.archivedAt, muted: isMuted(updated) });
 }));
 
 // Mark a conversation as read up to now for the current user, and let other participants
@@ -508,6 +617,14 @@ router.delete('/:id/messages/:messageId', requireAuth, asyncHandler(async (req, 
     data: { deletedAt: new Date() },
     include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
   });
+
+  // A deleted message can't stay pinned — clear it from the conversation and let everyone
+  // know the banner is gone, same as an explicit unpin.
+  const conversationRow = await prisma.conversation.findUnique({ where: { id }, select: { pinnedMessageId: true } });
+  if (conversationRow?.pinnedMessageId === messageId) {
+    await prisma.conversation.update({ where: { id }, data: { pinnedMessageId: null } });
+    getIo()?.to(`conversation:${id}`).emit('conversation:pin', { conversationId: id, pinnedMessage: null });
+  }
 
   const message = serializeMessage(updated);
   getIo()?.to(`conversation:${id}`).emit('message:deleted', message);

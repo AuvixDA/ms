@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Archive, ArchiveRestore, Bell, BellOff, MessageCircle, MoreVertical, Plus, Search, Trash2, Users } from 'lucide-react';
+import { Archive, ArchiveRestore, Bell, BellOff, Bookmark, ChevronLeft, MessageCircle, MoreVertical, Plus, Search, Trash2, Users } from 'lucide-react';
 import { api } from '../api/client';
 import { connectSocket } from '../socket';
 import { playNotificationSound } from '../notificationSound';
@@ -8,6 +8,7 @@ import NewChatModal from './NewChatModal';
 import Avatar from './Avatar';
 
 function conversationTitle(conversation) {
+  if (conversation.isSelf) return 'Избранное';
   if (conversation.isGroup) return conversation.name || 'Группа';
   const other = conversation.participants[0];
   return other?.name || other?.email || 'Пользователь';
@@ -22,6 +23,7 @@ export default function ChatList({ currentUserId, open, onClose }) {
   const [query, setQuery] = useState('');
   const [view, setView] = useState('active');
   const [menuFor, setMenuFor] = useState(null);
+  const [muteMenuFor, setMuteMenuFor] = useState(null);
   const menuRef = useRef(null);
   const newMenuRef = useRef(null);
   const navigate = useNavigate();
@@ -72,7 +74,10 @@ export default function ChatList({ currentUserId, open, onClose }) {
 
   useEffect(() => {
     function handleClickOutside(e) {
-      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuFor(null);
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuFor(null);
+        setMuteMenuFor(null);
+      }
       if (newMenuRef.current && !newMenuRef.current.contains(e.target)) setShowNewMenu(false);
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -135,6 +140,15 @@ export default function ChatList({ currentUserId, open, onClose }) {
     };
   }, [currentUserId]);
 
+  function openSavedMessages() {
+    setShowNewMenu(false);
+    api.getSavedMessages().then(({ conversation }) => {
+      setConversations((prev) => (prev.some((c) => c.id === conversation.id) ? prev : [conversation, ...prev]));
+      navigate(`/chat/${conversation.id}`);
+      onClose?.();
+    });
+  }
+
   function handleCreated(conversation) {
     setShowModal(false);
     setConversations((prev) => {
@@ -158,12 +172,13 @@ export default function ChatList({ currentUserId, open, onClose }) {
     }
   }
 
-  async function toggleMute(c) {
+  // mute is `false` to unmute, or one of '1h' | '8h' | 'forever' to (re)mute for that long.
+  async function setMute(c, mute) {
     setMenuFor(null);
-    const muted = !c.muted;
-    setConversations((prev) => prev.map((x) => (x.id === c.id ? { ...x, muted } : x)));
+    setMuteMenuFor(null);
+    setConversations((prev) => prev.map((x) => (x.id === c.id ? { ...x, muted: !!mute } : x)));
     try {
-      await api.updateConversationSettings(c.id, { muted });
+      await api.updateConversationSettings(c.id, { mute });
     } catch {
       refresh();
     }
@@ -243,6 +258,13 @@ export default function ChatList({ currentUserId, open, onClose }) {
                 <Users size={15} />
                 Создать группу
               </button>
+              <button
+                onClick={openSavedMessages}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+              >
+                <Bookmark size={15} />
+                Избранное
+              </button>
             </div>
           )}
         </div>
@@ -280,8 +302,9 @@ export default function ChatList({ currentUserId, open, onClose }) {
               >
                 <Avatar
                   name={conversationTitle(c)}
-                  src={!c.isGroup ? c.participants[0]?.avatarUrl : null}
+                  src={c.isGroup ? c.avatarUrl : !c.isSelf ? c.participants[0]?.avatarUrl : null}
                   online={isOnline}
+                  icon={c.isSelf ? <Bookmark size={16} /> : null}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
@@ -306,6 +329,7 @@ export default function ChatList({ currentUserId, open, onClose }) {
                 onClick={(e) => {
                   e.stopPropagation();
                   setMenuFor(menuFor === c.id ? null : c.id);
+                  setMuteMenuFor(null);
                 }}
                 className="icon-btn absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-surface-950/60"
                 title="Действия с чатом"
@@ -324,13 +348,51 @@ export default function ChatList({ currentUserId, open, onClose }) {
                     {c.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
                     {c.archived ? 'Из архива' : 'В архив'}
                   </button>
-                  <button
-                    onClick={() => toggleMute(c)}
-                    className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
-                  >
-                    {c.muted ? <Bell size={15} /> : <BellOff size={15} />}
-                    {c.muted ? 'Включить уведомления' : 'Заглушить'}
-                  </button>
+                  {c.muted ? (
+                    <button
+                      onClick={() => setMute(c, false)}
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+                    >
+                      <Bell size={15} />
+                      Включить уведомления
+                    </button>
+                  ) : muteMenuFor === c.id ? (
+                    <>
+                      <button
+                        onClick={() => setMuteMenuFor(null)}
+                        className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/50 hover:text-white hover:bg-white/5 transition-all duration-300"
+                      >
+                        <ChevronLeft size={15} />
+                        Заглушить на...
+                      </button>
+                      <button
+                        onClick={() => setMute(c, '1h')}
+                        className="w-full flex items-center gap-2 pl-9 pr-4 py-2 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+                      >
+                        1 час
+                      </button>
+                      <button
+                        onClick={() => setMute(c, '8h')}
+                        className="w-full flex items-center gap-2 pl-9 pr-4 py-2 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+                      >
+                        8 часов
+                      </button>
+                      <button
+                        onClick={() => setMute(c, 'forever')}
+                        className="w-full flex items-center gap-2 pl-9 pr-4 py-2 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+                      >
+                        Навсегда
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => setMuteMenuFor(c.id)}
+                      className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+                    >
+                      <BellOff size={15} />
+                      Заглушить
+                    </button>
+                  )}
                   <button
                     onClick={() => handleDeleteChat(c)}
                     className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all duration-300"

@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowLeft,
+  Bookmark,
   Check,
   CheckCheck,
   Clock,
@@ -13,6 +14,8 @@ import {
   Paperclip,
   Palette,
   Pencil,
+  Pin,
+  PinOff,
   Reply,
   Search,
   Send,
@@ -92,6 +95,7 @@ function formatTime(dateStr) {
 
 function conversationTitle(conversation) {
   if (!conversation) return '';
+  if (conversation.isSelf) return 'Избранное';
   if (conversation.isGroup) return conversation.name || 'Группа';
   const other = conversation.participants[0];
   if (!other) return 'Пользователь';
@@ -120,12 +124,15 @@ function readReceipts(message, conversation) {
   return { read, unread };
 }
 
-export default function ChatWindow({ conversationId, currentUserId, onOpenSidebar }) {
+export default function ChatWindow({ conversationId, currentUserId, onOpenSidebar, draft, onDraftChange }) {
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [text, setText] = useState('');
+  // Seeded once from the parent's per-chat draft store on mount — ChatWindow remounts on
+  // conversationId change (see the `key` prop in ChatPage), so this always picks up the
+  // right chat's draft without needing to resync later.
+  const [text, setText] = useState(draft || '');
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [showGroupInfo, setShowGroupInfo] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -144,6 +151,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   const [viewingHistory, setViewingHistory] = useState(false);
   const [reactionPickerFor, setReactionPickerFor] = useState(null);
   const [readByFor, setReadByFor] = useState(null);
+  const [mobileActionsFor, setMobileActionsFor] = useState(null);
   const [wallpaper, setWallpaper] = useState(() => localStorage.getItem(WALLPAPER_KEY) || 'none');
   const [wallpaperMenuOpen, setWallpaperMenuOpen] = useState(false);
   const searchTimeoutRef = useRef(null);
@@ -165,6 +173,8 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   // would otherwise carry an already-advanced lastReadAt) overwriting it mid-session.
   const unreadBoundaryRef = useRef(null);
   const boundaryCapturedRef = useRef(false);
+  const longPressTimerRef = useRef(null);
+  const longPressTriggeredRef = useRef(false);
   const navigate = useNavigate();
 
   function loadConversation() {
@@ -283,6 +293,11 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
       });
     }
 
+    function handleConversationPin({ conversationId: cid, pinnedMessage }) {
+      if (cid !== conversationId) return;
+      setConversation((prev) => (prev ? { ...prev, pinnedMessage } : prev));
+    }
+
     socket.on('message:new', handleNewMessage);
     socket.on('message:updated', handleMessageUpdated);
     socket.on('message:deleted', handleMessageDeleted);
@@ -290,6 +305,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     socket.on('conversation:updated', handleConversationUpdated);
     socket.on('conversation:removed', handleConversationRemoved);
     socket.on('conversation:read', handleConversationRead);
+    socket.on('conversation:pin', handleConversationPin);
     return () => {
       socket.emit('conversation:inactive', { conversationId });
       document.removeEventListener('visibilitychange', syncActiveState);
@@ -300,6 +316,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
       socket.off('conversation:updated', handleConversationUpdated);
       socket.off('conversation:removed', handleConversationRemoved);
       socket.off('conversation:read', handleConversationRead);
+      socket.off('conversation:pin', handleConversationPin);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId, currentUserId]);
@@ -407,6 +424,13 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+  }, [text]);
+
+  // Mirrors the in-progress text up to ChatPage's per-chat draft store on every keystroke,
+  // so switching chats (or reloading the page) doesn't lose what was being typed.
+  useEffect(() => {
+    onDraftChange?.(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
 
   function handleTextChange(e) {
@@ -683,6 +707,50 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
   }
 
+  // Only one message can be pinned at a time — pinning a different one silently replaces
+  // whatever was pinned before, both here and for every other participant (via conversation:pin).
+  async function togglePin(message) {
+    const isPinned = conversation?.pinnedMessage?.id === message.id;
+    const { pinnedMessage } = isPinned
+      ? await api.unpinMessage(conversationId)
+      : await api.pinMessage(conversationId, message.id);
+    setConversation((prev) => (prev ? { ...prev, pinnedMessage } : prev));
+  }
+
+  // Touch devices have no hover, so the desktop reply/forward/react bar is unreachable there —
+  // a long-press on the bubble opens the same actions as a bottom sheet instead. The 450ms
+  // hold-to-trigger mirrors native messenger long-press timing.
+  function handleBubbleTouchStart(m, deleted, pending, editing) {
+    if (deleted || pending || editing) return;
+    longPressTriggeredRef.current = false;
+    clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      if (navigator.vibrate) navigator.vibrate(10);
+      setMobileActionsFor(m);
+    }, 450);
+  }
+
+  function cancelBubbleLongPress() {
+    clearTimeout(longPressTimerRef.current);
+  }
+
+  // Swallows the synthetic click that follows touchend right after a long-press fired, so
+  // e.g. tapping an image bubble doesn't also open the lightbox behind the action sheet.
+  function suppressPostLongPressClick(e) {
+    if (longPressTriggeredRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      longPressTriggeredRef.current = false;
+    }
+  }
+
+  function openBubbleContextMenu(e, m, deleted, pending, editing) {
+    if (deleted || pending || editing) return;
+    e.preventDefault();
+    setMobileActionsFor(m);
+  }
+
   const other = !conversation?.isGroup ? conversation?.participants[0] : null;
 
   return (
@@ -709,14 +777,16 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
         >
           <ArrowLeft size={19} />
         </button>
-        {conversation?.isGroup ? (
-          <Avatar name={conversationTitle(conversation)} size="sm" />
+        {conversation?.isSelf ? (
+          <Avatar name={conversationTitle(conversation)} size="sm" icon={<Bookmark size={16} />} />
+        ) : conversation?.isGroup ? (
+          <Avatar name={conversationTitle(conversation)} src={conversation.avatarUrl} size="sm" />
         ) : (
           <Avatar name={other?.name} src={other?.avatarUrl} size="sm" online={!!presence?.online} />
         )}
         <div className="min-w-0 flex-1">
           <p className="font-medium text-white/90 truncate">{conversationTitle(conversation)}</p>
-          {!conversation?.isGroup && (
+          {!conversation?.isGroup && !conversation?.isSelf && (
             <p className={`text-xs truncate ${presence?.online ? 'text-emerald-400' : 'text-white/40'}`}>
               {presence?.online
                 ? 'в сети'
@@ -770,6 +840,38 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           </button>
         )}
       </div>
+      {conversation?.pinnedMessage && (
+        <button
+          onClick={() => scrollToMessage(conversation.pinnedMessage.id)}
+          className="glass-panel border-x-0 border-t-0 px-4 py-2 flex items-center gap-2.5 shrink-0 text-left animate-fade-in hover:bg-white/5 transition-colors duration-200"
+        >
+          <Pin size={15} className="text-cyan-300 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-cyan-300/90">Закреплённое сообщение</p>
+            <p className="text-xs text-white/50 truncate">
+              {conversation.pinnedMessage.text || (conversation.pinnedMessage.fileName ? 'Файл' : '')}
+            </p>
+          </div>
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              togglePin(conversation.pinnedMessage);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.stopPropagation();
+                togglePin(conversation.pinnedMessage);
+              }
+            }}
+            className="icon-btn p-1.5 rounded-full shrink-0"
+            title="Открепить"
+          >
+            <X size={15} />
+          </span>
+        </button>
+      )}
       {searchOpen && (
         <div className="glass-panel border-x-0 border-t-0 px-4 py-2.5 shrink-0 animate-fade-in relative">
           <div className="relative">
@@ -840,6 +942,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           const read = mine && !deleted && isReadByOthers(m, conversation);
           const isFresh = !initialLoadIdsRef.current.has(m.id);
           const pending = m.status === 'sending' || m.status === 'failed';
+          const pinned = conversation?.pinnedMessage?.id === m.id;
           const showUnreadDivider =
             !mine &&
             unreadBoundaryRef.current &&
@@ -860,7 +963,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
               className={`group flex items-end gap-2 ${isFresh ? 'animate-message-in' : ''} ${mine ? 'justify-end' : 'justify-start'}`}
             >
               {mine && !deleted && !editing && !pending && (
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 mb-1">
+                <div className="hidden md:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 mb-1">
                   <button
                     onClick={() => setReplyingTo(buildReplyContext(m))}
                     className="icon-btn p-1.5 rounded-full"
@@ -874,6 +977,13 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                     title="Переслать"
                   >
                     <Forward size={13} />
+                  </button>
+                  <button
+                    onClick={() => togglePin(m)}
+                    className="icon-btn p-1.5 rounded-full"
+                    title={pinned ? 'Открепить' : 'Закрепить'}
+                  >
+                    {pinned ? <PinOff size={13} /> : <Pin size={13} />}
                   </button>
                   <div className="relative" data-reaction-picker>
                     <button
@@ -920,7 +1030,13 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
               )}
               <div
                 id={`msg-${m.id}`}
-                className={`max-w-[75%] md:max-w-md px-4 py-2.5 shadow-lg transition-all duration-300 rounded-2xl ${
+                onTouchStart={() => handleBubbleTouchStart(m, deleted, pending, editing)}
+                onTouchEnd={cancelBubbleLongPress}
+                onTouchMove={cancelBubbleLongPress}
+                onTouchCancel={cancelBubbleLongPress}
+                onClickCapture={suppressPostLongPressClick}
+                onContextMenu={(e) => openBubbleContextMenu(e, m, deleted, pending, editing)}
+                className={`max-w-[75%] md:max-w-md px-4 py-2.5 shadow-lg transition-all duration-300 rounded-2xl select-none md:select-text ${
                   deleted
                     ? 'msg-bubble text-white/35 italic'
                     : mine
@@ -1097,7 +1213,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                 )}
               </div>
               {!mine && !deleted && !pending && (
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 mb-1 shrink-0">
+                <div className="hidden md:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 mb-1 shrink-0">
                   <button
                     onClick={() => setReplyingTo(buildReplyContext(m))}
                     className="icon-btn p-1.5 rounded-full"
@@ -1111,6 +1227,13 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                     title="Переслать"
                   >
                     <Forward size={13} />
+                  </button>
+                  <button
+                    onClick={() => togglePin(m)}
+                    className="icon-btn p-1.5 rounded-full"
+                    title={pinned ? 'Открепить' : 'Закрепить'}
+                  >
+                    {pinned ? <PinOff size={13} /> : <Pin size={13} />}
                   </button>
                   <div className="relative" data-reaction-picker>
                     <button
@@ -1240,6 +1363,94 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
       )}
       {lightboxImage && (
         <Lightbox src={lightboxImage.src} alt={lightboxImage.alt} onClose={() => setLightboxImage(null)} />
+      )}
+      {mobileActionsFor && (
+        <div
+          onClick={() => setMobileActionsFor(null)}
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end justify-center z-[60] animate-fade-in md:hidden"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="glass-card w-full max-w-md rounded-t-3xl p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] animate-slide-up"
+          >
+            <div className="w-9 h-1 rounded-full bg-white/20 mx-auto mb-3" />
+            <div className="flex items-center justify-center gap-2 pb-3 mb-2 border-b border-white/10">
+              {QUICK_REACTIONS.map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => {
+                    toggleReaction(mobileActionsFor, emoji);
+                    setMobileActionsFor(null);
+                  }}
+                  className="text-2xl p-1.5 rounded-full active:scale-90 transition-transform duration-150"
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => {
+                setReplyingTo(buildReplyContext(mobileActionsFor));
+                setMobileActionsFor(null);
+              }}
+              className="w-full flex items-center gap-3 px-2 py-3 rounded-xl text-white/85 active:bg-white/5"
+            >
+              <Reply size={18} />
+              <span className="text-sm">Ответить</span>
+            </button>
+            <button
+              onClick={() => {
+                setForwardingMessage(mobileActionsFor);
+                setMobileActionsFor(null);
+              }}
+              className="w-full flex items-center gap-3 px-2 py-3 rounded-xl text-white/85 active:bg-white/5"
+            >
+              <Forward size={18} />
+              <span className="text-sm">Переслать</span>
+            </button>
+            <button
+              onClick={() => {
+                togglePin(mobileActionsFor);
+                setMobileActionsFor(null);
+              }}
+              className="w-full flex items-center gap-3 px-2 py-3 rounded-xl text-white/85 active:bg-white/5"
+            >
+              {conversation?.pinnedMessage?.id === mobileActionsFor.id ? (
+                <PinOff size={18} />
+              ) : (
+                <Pin size={18} />
+              )}
+              <span className="text-sm">
+                {conversation?.pinnedMessage?.id === mobileActionsFor.id ? 'Открепить' : 'Закрепить'}
+              </span>
+            </button>
+            {mobileActionsFor.senderId === currentUserId && (
+              <>
+                <button
+                  onClick={() => {
+                    startEdit(mobileActionsFor);
+                    setMobileActionsFor(null);
+                  }}
+                  className="w-full flex items-center gap-3 px-2 py-3 rounded-xl text-white/85 active:bg-white/5"
+                >
+                  <Pencil size={18} />
+                  <span className="text-sm">Редактировать</span>
+                </button>
+                <button
+                  onClick={() => {
+                    const target = mobileActionsFor;
+                    setMobileActionsFor(null);
+                    handleDelete(target);
+                  }}
+                  className="w-full flex items-center gap-3 px-2 py-3 rounded-xl text-rose-400 active:bg-rose-400/10"
+                >
+                  <Trash2 size={18} />
+                  <span className="text-sm">Удалить</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

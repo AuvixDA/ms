@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Crown, LogOut, Pencil, UserPlus, Users, X } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Camera, Crown, LogOut, Pencil, UserPlus, Users, X } from 'lucide-react';
 import { api } from '../api/client';
 import Avatar from './Avatar';
 import UserSearchList from './UserSearchList';
@@ -10,11 +10,30 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
   const [adding, setAdding] = useState(false);
   const [toAdd, setToAdd] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const [error, setError] = useState('');
+  const avatarInputRef = useRef(null);
   // Groups created before ownership existed have no ownerId — leave those unrestricted
   // rather than hiding moderation controls nobody can otherwise reach. Mirrors the
   // equivalent bypass in the backend's rename/remove-participant routes.
   const canModerate = !conversation.ownerId || conversation.ownerId === currentUserId;
+
+  async function handleAvatarChange(e) {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    setError('');
+    setAvatarBusy(true);
+    try {
+      const { fileUrl } = await api.uploadFile(file);
+      const { conversation: updated } = await api.updateGroupAvatar(conversation.id, fileUrl);
+      onUpdated(updated);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
 
   async function saveName() {
     if (!name.trim() || name.trim() === conversation.name) {
@@ -88,6 +107,32 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
             {error}
           </p>
         )}
+
+        <div className="flex items-center gap-3 mb-5">
+          {canModerate ? (
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              disabled={avatarBusy}
+              className="relative group shrink-0 rounded-full"
+              title="Изменить аватар группы"
+            >
+              <Avatar name={conversation.name || 'Группа'} src={conversation.avatarUrl} size="lg" />
+              <span className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                <Camera size={18} className="text-[#fff]" />
+              </span>
+            </button>
+          ) : (
+            <Avatar name={conversation.name || 'Группа'} src={conversation.avatarUrl} size="lg" />
+          )}
+          <input
+            type="file"
+            accept="image/*"
+            ref={avatarInputRef}
+            onChange={handleAvatarChange}
+            className="hidden"
+          />
+        </div>
 
         <div className="mb-5">
           {editingName ? (

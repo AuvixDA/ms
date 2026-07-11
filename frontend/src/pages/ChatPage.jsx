@@ -7,14 +7,24 @@ import { getTheme, toggleTheme } from '../theme';
 import { subscribeToPush } from '../push';
 
 const PUSH_PROMPT_DISMISSED_KEY = 'pushPromptDismissed';
+const MESSAGE_DRAFTS_KEY = 'messageDrafts';
 import ChatList from '../components/ChatList';
 import ChatWindow from '../components/ChatWindow';
 import Avatar from '../components/Avatar';
+
+function loadDrafts() {
+  try {
+    return JSON.parse(localStorage.getItem(MESSAGE_DRAFTS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
 
 export default function ChatPage() {
   const { user, logout, updateUser } = useAuth();
   const { conversationId } = useParams();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [drafts, setDrafts] = useState(loadDrafts);
   const [profileOpen, setProfileOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
@@ -69,6 +79,17 @@ export default function ChatPage() {
     } finally {
       setAvatarBusy(false);
     }
+  }
+
+  function updateDraft(id, value) {
+    setDrafts((prev) => {
+      if ((prev[id] || '') === value) return prev;
+      const next = { ...prev };
+      if (value) next[id] = value;
+      else delete next[id];
+      localStorage.setItem(MESSAGE_DRAFTS_KEY, JSON.stringify(next));
+      return next;
+    });
   }
 
   function copyInviteLink() {
@@ -138,6 +159,8 @@ export default function ChatPage() {
             conversationId={conversationId}
             currentUserId={user.id}
             onOpenSidebar={() => setSidebarOpen(true)}
+            draft={drafts[conversationId] || ''}
+            onDraftChange={(value) => updateDraft(conversationId, value)}
           />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-white/30">

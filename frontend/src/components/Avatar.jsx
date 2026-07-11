@@ -31,13 +31,19 @@ const SIZES = {
   lg: 'w-14 h-14 text-lg',
 };
 
-export default function Avatar({ name, src, size = 'md', online = false, className = '' }) {
+export default function Avatar({ name, src, size = 'md', online = false, className = '', icon = null }) {
   const gradient = GRADIENTS[hashString(name || '?') % GRADIENTS.length];
   const sizeClasses = SIZES[size] || SIZES.md;
 
   return (
     <span className={`relative inline-flex shrink-0 ${className}`}>
-      {src ? (
+      {icon ? (
+        <span
+          className={`${sizeClasses} rounded-full flex items-center justify-center text-[#fff] bg-gradient-to-br from-cyan-500 to-blue-600 ring-1 ring-white/10`}
+        >
+          {icon}
+        </span>
+      ) : src ? (
         <img
           src={resolveFileUrl(src)}
           alt={name}

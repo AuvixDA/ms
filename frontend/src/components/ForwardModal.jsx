@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Forward, Search, X } from 'lucide-react';
+import { Bookmark, Forward, Search, X } from 'lucide-react';
 import { api } from '../api/client';
 import { connectSocket } from '../socket';
 import Avatar from './Avatar';
 
 function conversationTitle(c) {
+  if (c.isSelf) return 'Избранное';
   if (c.isGroup) return c.name || 'Группа';
   const other = c.participants[0];
   return other?.name || 'Пользователь';
@@ -86,8 +87,9 @@ export default function ForwardModal({ message, onClose }) {
               >
                 <Avatar
                   name={conversationTitle(c)}
-                  src={!c.isGroup ? c.participants[0]?.avatarUrl : null}
+                  src={c.isGroup ? c.avatarUrl : !c.isSelf ? c.participants[0]?.avatarUrl : null}
                   size="sm"
+                  icon={c.isSelf ? <Bookmark size={14} /> : null}
                 />
                 <span className="flex-1 text-left min-w-0 text-white/90 truncate">{conversationTitle(c)}</span>
                 {done && <span className="text-xs text-emerald-400 shrink-0">Отправлено</span>}

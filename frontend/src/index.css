@@ -16,6 +16,7 @@
 
   --animate-message-in: message-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   --animate-fade-in: fade-in 0.3s ease-out;
+  --animate-slide-up: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   --animate-pulse-glow: pulse-glow 2.2s ease-in-out infinite;
 
   @keyframes message-in {
@@ -35,6 +36,15 @@
     }
     to {
       opacity: 1;
+    }
+  }
+
+  @keyframes slide-up {
+    from {
+      transform: translateY(100%);
+    }
+    to {
+      transform: translateY(0);
     }
   }
 

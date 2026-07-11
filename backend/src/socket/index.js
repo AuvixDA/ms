@@ -168,7 +168,8 @@ function initSocket(httpServer, frontendOrigin) {
           where: { conversationId, userId: { not: userId } },
         });
         participants.forEach((p) => {
-          if (!p.mutedAt && !isViewingConversation(p.userId, conversationId)) {
+          const muted = !!p.muteUntil && new Date(p.muteUntil) > new Date();
+          if (!muted && !isViewingConversation(p.userId, conversationId)) {
             notifyUser(p.userId, {
               title: message.sender.name,
               body: message.text || 'Отправил файл',

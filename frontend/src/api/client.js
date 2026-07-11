@@ -49,12 +49,19 @@ export const api = {
   getConversation: (conversationId) => request(`/conversations/${conversationId}`),
   renameConversation: (conversationId, name) =>
     request(`/conversations/${conversationId}`, { method: 'PATCH', body: { name } }),
+  updateGroupAvatar: (conversationId, avatarUrl) =>
+    request(`/conversations/${conversationId}`, { method: 'PATCH', body: { avatarUrl } }),
   updateConversationSettings: (conversationId, settings) =>
     request(`/conversations/${conversationId}/settings`, { method: 'PATCH', body: settings }),
   markConversationRead: (conversationId) =>
     request(`/conversations/${conversationId}/read`, { method: 'POST' }),
   deleteConversation: (conversationId) =>
     request(`/conversations/${conversationId}`, { method: 'DELETE' }),
+  getSavedMessages: () => request('/conversations/saved-messages', { method: 'POST' }),
+  pinMessage: (conversationId, messageId) =>
+    request(`/conversations/${conversationId}/pin`, { method: 'POST', body: { messageId } }),
+  unpinMessage: (conversationId) =>
+    request(`/conversations/${conversationId}/pin`, { method: 'POST', body: { messageId: null } }),
   addParticipants: (conversationId, userIds) =>
     request(`/conversations/${conversationId}/participants`, { method: 'POST', body: { userIds } }),
   removeParticipant: (conversationId, userId) =>

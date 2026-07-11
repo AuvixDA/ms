@@ -24,11 +24,14 @@ model User {
 }
 
 model Conversation {
-  id        String   @id @default(uuid())
-  isGroup   Boolean  @default(false)
-  name      String?
-  ownerId   String?
-  createdAt DateTime @default(now())
+  id              String   @id @default(uuid())
+  isGroup         Boolean  @default(false)
+  isSelf          Boolean  @default(false)
+  name            String?
+  avatarUrl       String?
+  ownerId         String?
+  pinnedMessageId String?
+  createdAt       DateTime @default(now())
 
   participants ConversationParticipant[]
   messages     Message[]
@@ -41,7 +44,7 @@ model ConversationParticipant {
   joinedAt       DateTime  @default(now())
   lastReadAt     DateTime?
   archivedAt     DateTime?
-  mutedAt        DateTime?
+  muteUntil      DateTime?
   hiddenAt       DateTime?
 
   user         User         @relation(fields: [userId], references: [id])
