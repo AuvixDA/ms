@@ -118,11 +118,13 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
 
     if (existing && existing.participants.length === 2) {
       // Re-surface the conversation for the current user in case they had previously
-      // hidden ("deleted") it from their own list.
+      // hidden ("deleted") it from their own list. Hiding leaves the socket room (see the
+      // DELETE handler below), so rejoin it here to keep receiving live updates.
       await prisma.conversationParticipant.updateMany({
         where: { conversationId: existing.id, userId: req.userId, hiddenAt: { not: null } },
         data: { hiddenAt: null },
       });
+      joinUserToConversation(req.userId, existing.id);
       return res.json({ conversation: existing, alreadyExisted: true });
     }
   }
@@ -137,6 +139,12 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
     },
     include: { participants: { include: { user: true } } },
   });
+
+  // Join every other participant's already-connected sockets into the new conversation's
+  // room and let them know it exists, so it shows up in their chat list immediately instead
+  // of only after their next reconnect.
+  allParticipantIds.forEach((userId) => joinUserToConversation(userId, conversation.id));
+  getIo()?.to(`conversation:${conversation.id}`).emit('conversation:new', { conversationId: conversation.id });
 
   res.status(201).json({ conversation });
 }));
@@ -252,6 +260,10 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
     where: { userId_conversationId: { userId: req.userId, conversationId: id } },
     data: { hiddenAt: new Date() },
   });
+
+  // Stop delivering live events for a chat the user no longer wants to see; they rejoin
+  // automatically if it's re-surfaced (see the POST '/' and message:send handlers).
+  leaveUserFromConversation(req.userId, id);
 
   res.json({ ok: true });
 }));

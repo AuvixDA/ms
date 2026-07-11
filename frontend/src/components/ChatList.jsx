@@ -66,6 +66,7 @@ export default function ChatList({ currentUserId, open, onClose }) {
     socket.on('message:updated', handleListChanged);
     socket.on('message:deleted', handleListChanged);
     socket.on('presence:update', handlePresence);
+    socket.on('conversation:new', handleListChanged);
     socket.on('conversation:updated', handleListChanged);
     socket.on('conversation:removed', handleListChanged);
     socket.on('conversation:read', handleConversationRead);
@@ -74,6 +75,7 @@ export default function ChatList({ currentUserId, open, onClose }) {
       socket.off('message:updated', handleListChanged);
       socket.off('message:deleted', handleListChanged);
       socket.off('presence:update', handlePresence);
+      socket.off('conversation:new', handleListChanged);
       socket.off('conversation:updated', handleListChanged);
       socket.off('conversation:removed', handleListChanged);
       socket.off('conversation:read', handleConversationRead);

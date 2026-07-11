@@ -56,6 +56,8 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   const bottomRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const shouldStickToBottomRef = useRef(true);
+  const initialLoadIdsRef = useRef(new Set());
+  const skipScrollAnimationRef = useRef(true);
   const navigate = useNavigate();
 
   function loadConversation() {
@@ -72,8 +74,10 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     setHasMore(false);
     setEditingId(null);
     shouldStickToBottomRef.current = true;
+    skipScrollAnimationRef.current = true;
 
     api.getMessages(conversationId).then((data) => {
+      initialLoadIdsRef.current = new Set(data.messages.map((m) => m.id));
       setMessages(data.messages);
       setHasMore(data.hasMore);
       markRead();
@@ -82,6 +86,17 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
 
     const socket = connectSocket();
     socket.emit('conversation:join', { conversationId });
+
+    // Let the server know this chat is open in the foreground, so it can skip push
+    // notifications for it — but only while the tab itself is actually visible; a chat
+    // left open in a backgrounded tab should still notify.
+    function syncActiveState() {
+      socket.emit(document.visibilityState === 'visible' ? 'conversation:active' : 'conversation:inactive', {
+        conversationId,
+      });
+    }
+    syncActiveState();
+    document.addEventListener('visibilitychange', syncActiveState);
 
     function handleNewMessage(message) {
       if (message.conversationId !== conversationId) return;
@@ -138,6 +153,8 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     socket.on('conversation:removed', handleConversationRemoved);
     socket.on('conversation:read', handleConversationRead);
     return () => {
+      socket.emit('conversation:inactive', { conversationId });
+      document.removeEventListener('visibilitychange', syncActiveState);
       socket.off('message:new', handleNewMessage);
       socket.off('message:updated', handleMessageUpdated);
       socket.off('message:deleted', handleMessageDeleted);
@@ -151,8 +168,9 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
 
   useEffect(() => {
     if (shouldStickToBottomRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      bottomRef.current?.scrollIntoView({ behavior: skipScrollAnimationRef.current ? 'auto' : 'smooth' });
     }
+    skipScrollAnimationRef.current = false;
   }, [messages]);
 
   async function loadOlderMessages() {
@@ -162,6 +180,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     const prevScrollHeight = container?.scrollHeight || 0;
     try {
       const data = await api.getMessages(conversationId, messages[0].id);
+      data.messages.forEach((m) => initialLoadIdsRef.current.add(m.id));
       shouldStickToBottomRef.current = false;
       setMessages((prev) => [...data.messages, ...prev]);
       setHasMore(data.hasMore);
@@ -293,10 +312,11 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           const isImage = m.fileUrl && IMAGE_EXTENSIONS.test(m.fileUrl);
           const editing = editingId === m.id;
           const read = mine && !deleted && isReadByOthers(m, conversation);
+          const isFresh = !initialLoadIdsRef.current.has(m.id);
           return (
             <div
               key={m.id}
-              className={`group flex items-end gap-2 animate-message-in ${mine ? 'justify-end' : 'justify-start'}`}
+              className={`group flex items-end gap-2 ${isFresh ? 'animate-message-in' : ''} ${mine ? 'justify-end' : 'justify-start'}`}
             >
               {mine && !deleted && !editing && (
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 mb-1">
@@ -324,10 +344,10 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
               <div
                 className={`max-w-[75%] md:max-w-md px-4 py-2.5 shadow-lg transition-all duration-300 ${
                   deleted
-                    ? 'glass-card text-white/35 italic rounded-2xl'
+                    ? 'msg-bubble text-white/35 italic rounded-2xl'
                     : mine
                     ? 'bg-gradient-to-br from-violet-600/90 to-indigo-600/90 text-white rounded-2xl rounded-br-md shadow-glow-violet'
-                    : 'glass-card text-white/90 rounded-2xl rounded-bl-md'
+                    : 'msg-bubble text-white/90 rounded-2xl rounded-bl-md'
                 }`}
               >
                 {!mine && !deleted && showAvatar && (

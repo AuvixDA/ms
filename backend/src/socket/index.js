@@ -22,6 +22,20 @@ function isOnline(userId) {
   return onlineUsers.has(userId);
 }
 
+// True if any of the user's connected sockets currently has this conversation open and
+// in the foreground (see the conversation:active/inactive handlers below). Used to skip
+// push notifications for a chat the user is already looking at, even while they're online
+// in another tab or another conversation.
+function isViewingConversation(userId, conversationId) {
+  if (!ioInstance) return false;
+  const socketIds = onlineUsers.get(userId);
+  if (!socketIds) return false;
+  for (const socketId of socketIds) {
+    if (ioInstance.sockets.sockets.get(socketId)?.activeConversationId === conversationId) return true;
+  }
+  return false;
+}
+
 let ioInstance = null;
 
 function getIo() {
@@ -78,6 +92,16 @@ function initSocket(httpServer, frontendOrigin) {
       socket.join(`conversation:${conversationId}`);
     });
 
+    // Tracks which conversation (if any) this socket currently has open in the
+    // foreground, so message:send can decide whether a push notification is needed.
+    socket.on('conversation:active', ({ conversationId }) => {
+      socket.activeConversationId = conversationId;
+    });
+
+    socket.on('conversation:inactive', ({ conversationId }) => {
+      if (socket.activeConversationId === conversationId) socket.activeConversationId = null;
+    });
+
     socket.on('typing', ({ conversationId, isTyping }) => {
       socket.to(`conversation:${conversationId}`).emit('typing', { conversationId, userId, isTyping });
     });
@@ -107,17 +131,26 @@ function initSocket(httpServer, frontendOrigin) {
         if (ack) ack({ message });
 
         // A new message un-hides the conversation for anyone who had previously
-        // "deleted" it from their own chat list.
-        await prisma.conversationParticipant.updateMany({
+        // "deleted" it from their own chat list, and rejoins their sockets to the room
+        // (hiding a chat leaves it — see the DELETE /conversations/:id route) so they keep
+        // receiving live updates for it going forward.
+        const previouslyHidden = await prisma.conversationParticipant.findMany({
           where: { conversationId, userId: { not: userId }, hiddenAt: { not: null } },
-          data: { hiddenAt: null },
+          select: { userId: true },
         });
+        if (previouslyHidden.length > 0) {
+          await prisma.conversationParticipant.updateMany({
+            where: { conversationId, userId: { not: userId }, hiddenAt: { not: null } },
+            data: { hiddenAt: null },
+          });
+          previouslyHidden.forEach((p) => joinUserToConversation(p.userId, conversationId));
+        }
 
         const participants = await prisma.conversationParticipant.findMany({
           where: { conversationId, userId: { not: userId } },
         });
         participants.forEach((p) => {
-          if (!p.mutedAt && !isOnline(p.userId)) {
+          if (!p.mutedAt && !isViewingConversation(p.userId, conversationId)) {
             notifyUser(p.userId, {
               title: message.sender.name,
               body: message.text || 'Отправил файл',

@@ -107,6 +107,14 @@ body {
     border: 1px solid rgb(255 255 255 / 0.1);
   }
 
+  /* Same look as .glass-card without backdrop-filter. Message bubbles can number in the
+     dozens and re-paint on every scroll/animation frame — blur is by far the most
+     expensive part of that repaint, so bubbles use this instead to keep scrolling smooth. */
+  .msg-bubble {
+    background-color: rgb(255 255 255 / 0.06);
+    border: 1px solid rgb(255 255 255 / 0.1);
+  }
+
   .icon-btn {
     display: inline-flex;
     align-items: center;
