@@ -12,7 +12,7 @@ function conversationTitle(conversation) {
   return other?.name || other?.email || 'Пользователь';
 }
 
-export default function ChatList({ currentUserId }) {
+export default function ChatList({ currentUserId, open, onClose }) {
   const [conversations, setConversations] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [onlineIds, setOnlineIds] = useState(new Set());
@@ -89,6 +89,7 @@ export default function ChatList({ currentUserId }) {
         .filter((u) => u.id !== currentUserId), lastMessage: null, unreadCount: 0, archived: false, muted: false }, ...prev];
     });
     navigate(`/chat/${conversation.id}`);
+    onClose?.();
   }
 
   async function toggleArchive(c) {
@@ -132,7 +133,18 @@ export default function ChatList({ currentUserId }) {
   const archivedCount = conversations.filter((c) => c.archived).length;
 
   return (
-    <div className="w-80 glass-panel border-y-0 border-l-0 flex flex-col h-full z-10">
+    <>
+      {open && (
+        <div
+          onClick={onClose}
+          className="absolute inset-0 bg-black/60 backdrop-blur-sm z-20 md:hidden animate-fade-in"
+        />
+      )}
+      <div
+        className={`w-full sm:w-80 md:w-80 glass-panel border-y-0 border-l-0 flex flex-col h-full absolute md:static inset-y-0 left-0 z-30 transition-transform duration-300 ease-in-out ${
+          open ? 'translate-x-0' : '-translate-x-full'
+        } md:translate-x-0`}
+      >
       <div className="p-3 flex items-center gap-2 shrink-0">
         <div className="relative flex-1">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/35" />
@@ -173,7 +185,10 @@ export default function ChatList({ currentUserId }) {
           return (
             <div key={c.id} className="relative group">
               <button
-                onClick={() => navigate(`/chat/${c.id}`)}
+                onClick={() => {
+                  navigate(`/chat/${c.id}`);
+                  onClose?.();
+                }}
                 className={`w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-xl transition-all duration-300 ${
                   active
                     ? 'bg-gradient-to-r from-violet-500/20 to-cyan-500/10 ring-1 ring-white/10 shadow-glow-violet'
@@ -256,6 +271,7 @@ export default function ChatList({ currentUserId }) {
         )}
       </div>
       {showModal && <NewChatModal onClose={() => setShowModal(false)} onCreated={handleCreated} />}
-    </div>
+      </div>
+    </>
   );
 }

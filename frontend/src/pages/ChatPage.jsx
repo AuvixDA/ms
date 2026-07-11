@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom';
-import { useRef, useState } from 'react';
-import { Camera, Check, Copy, LogOut, MessageSquareDashed, Settings, UserCircle2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Camera, Check, Copy, LogOut, Menu, MessageSquareDashed, Settings, UserCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import ChatList from '../components/ChatList';
@@ -15,9 +15,14 @@ export default function ChatPage() {
   const [copied, setCopied] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarError, setAvatarError] = useState('');
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const avatarInputRef = useRef(null);
 
   const inviteLink = `${window.location.origin}/u/${user.username}`;
+
+  useEffect(() => {
+    setSidebarOpen(!conversationId);
+  }, [conversationId]);
 
   async function handleAvatarChange(e) {
     const file = e.target.files[0];
@@ -45,8 +50,15 @@ export default function ChatPage() {
 
   return (
     <div className="h-screen flex flex-col neon-bg text-white overflow-hidden">
-      <header className="glass-panel flex justify-between items-center px-4 py-3 z-20 shrink-0">
+      <header className="glass-panel flex justify-between items-center px-4 py-3 z-40 shrink-0">
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="icon-btn p-2 rounded-full transition-all duration-300 md:hidden"
+            title="Список чатов"
+          >
+            <Menu size={19} />
+          </button>
           <Avatar name={user.name} src={user.avatarUrl} size="sm" />
           <span className="font-semibold tracking-wide">{user.name}</span>
         </div>
@@ -81,10 +93,15 @@ export default function ChatPage() {
           )}
         </div>
       </header>
-      <div className="flex flex-1 overflow-hidden">
-        <ChatList currentUserId={user.id} />
+      <div className="flex flex-1 overflow-hidden relative">
+        <ChatList currentUserId={user.id} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         {conversationId ? (
-          <ChatWindow key={conversationId} conversationId={conversationId} currentUserId={user.id} />
+          <ChatWindow
+            key={conversationId}
+            conversationId={conversationId}
+            currentUserId={user.id}
+            onOpenSidebar={() => setSidebarOpen(true)}
+          />
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 text-white/30">
             <MessageSquareDashed size={56} strokeWidth={1.25} />

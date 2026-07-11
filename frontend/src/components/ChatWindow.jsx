@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  ArrowLeft,
   Check,
   CheckCheck,
   FileIcon,
@@ -40,7 +41,7 @@ function isReadByOthers(message, conversation) {
   );
 }
 
-export default function ChatWindow({ conversationId, currentUserId }) {
+export default function ChatWindow({ conversationId, currentUserId, onOpenSidebar }) {
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [hasMore, setHasMore] = useState(false);
@@ -255,6 +256,13 @@ export default function ChatWindow({ conversationId, currentUserId }) {
   return (
     <div className="flex-1 flex flex-col h-full min-w-0">
       <div className="glass-panel border-x-0 border-t-0 px-4 py-3 flex items-center gap-3 shrink-0">
+        <button
+          onClick={onOpenSidebar}
+          className="icon-btn p-2 -ml-2 rounded-full transition-all duration-300 md:hidden shrink-0"
+          title="К списку чатов"
+        >
+          <ArrowLeft size={19} />
+        </button>
         {conversation?.isGroup ? (
           <Avatar name={conversationTitle(conversation)} size="sm" />
         ) : (
