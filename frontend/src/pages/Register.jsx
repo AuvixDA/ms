@@ -58,9 +58,13 @@ export default function Register() {
             type="text"
             placeholder="Юзернейм (например ivan228)"
             value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
             pattern="[a-zA-Z0-9_]{3,20}"
             title="3-20 символов: латинские буквы, цифры, подчёркивание"
+            autoComplete="off"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck="false"
             className="glass-input w-full pl-9 pr-3 py-2.5 rounded-full text-sm text-white placeholder-white/35 outline-none focus:ring-2 focus:ring-neon-violet/50 transition-all duration-300"
             required
           />

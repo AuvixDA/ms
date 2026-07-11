@@ -3,9 +3,10 @@ import { Users, X } from 'lucide-react';
 import { api } from '../api/client';
 import UserSearchList from './UserSearchList';
 
-export default function NewChatModal({ onClose, onCreated }) {
+export default function NewChatModal({ onClose, onCreated, mode = 'chat' }) {
   const [selected, setSelected] = useState([]);
   const [groupName, setGroupName] = useState('');
+  const isGroupMode = mode === 'group';
 
   function toggleUser(user) {
     setSelected((prev) =>
@@ -15,7 +16,7 @@ export default function NewChatModal({ onClose, onCreated }) {
 
   async function handleCreate() {
     if (selected.length === 0) return;
-    const isGroup = selected.length > 1;
+    const isGroup = isGroupMode || selected.length > 1;
     const { conversation } = await api.createConversation(
       selected.map((u) => u.id),
       isGroup,
@@ -30,14 +31,14 @@ export default function NewChatModal({ onClose, onCreated }) {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <Users size={18} className="text-cyan-300" />
-            Новый чат
+            {isGroupMode ? 'Новая группа' : 'Новый чат'}
           </h2>
           <button onClick={onClose} className="icon-btn p-1.5 rounded-full transition-all duration-300">
             <X size={18} />
           </button>
         </div>
 
-        {selected.length > 1 && (
+        {(isGroupMode || selected.length > 1) && (
           <input
             type="text"
             placeholder="Название группы"

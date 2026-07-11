@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Archive, ArchiveRestore, Bell, BellOff, MoreVertical, Plus, Search, Trash2 } from 'lucide-react';
+import { Archive, ArchiveRestore, Bell, BellOff, MessageCircle, MoreVertical, Plus, Search, Trash2, Users } from 'lucide-react';
 import { api } from '../api/client';
 import { connectSocket } from '../socket';
 import { playNotificationSound } from '../notificationSound';
@@ -16,11 +16,14 @@ function conversationTitle(conversation) {
 export default function ChatList({ currentUserId, open, onClose }) {
   const [conversations, setConversations] = useState([]);
   const [showModal, setShowModal] = useState(false);
+  const [newChatMode, setNewChatMode] = useState('chat');
+  const [showNewMenu, setShowNewMenu] = useState(false);
   const [onlineIds, setOnlineIds] = useState(new Set());
   const [query, setQuery] = useState('');
   const [view, setView] = useState('active');
   const [menuFor, setMenuFor] = useState(null);
   const menuRef = useRef(null);
+  const newMenuRef = useRef(null);
   const navigate = useNavigate();
   const { conversationId } = useParams();
   // Read inside the socket effect below without making it re-subscribe on every change —
@@ -70,6 +73,7 @@ export default function ChatList({ currentUserId, open, onClose }) {
   useEffect(() => {
     function handleClickOutside(e) {
       if (menuRef.current && !menuRef.current.contains(e.target)) setMenuFor(null);
+      if (newMenuRef.current && !newMenuRef.current.contains(e.target)) setShowNewMenu(false);
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
@@ -207,13 +211,41 @@ export default function ChatList({ currentUserId, open, onClose }) {
             className="glass-input w-full pl-9 pr-3 py-2 rounded-full text-sm text-white placeholder-white/35 outline-none focus:ring-2 focus:ring-neon-violet/50 transition-all duration-300"
           />
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="icon-btn glass-input p-2.5 rounded-full transition-all duration-300"
-          title="Новый чат"
-        >
-          <Plus size={18} />
-        </button>
+        <div className="relative" ref={newMenuRef}>
+          <button
+            onClick={() => setShowNewMenu((v) => !v)}
+            className="icon-btn glass-input p-2.5 rounded-full transition-all duration-300"
+            title="Новый чат"
+          >
+            <Plus size={18} />
+          </button>
+          {showNewMenu && (
+            <div className="absolute right-0 top-12 glass-card rounded-xl shadow-xl py-1 min-w-48 z-30 animate-fade-in">
+              <button
+                onClick={() => {
+                  setShowNewMenu(false);
+                  setNewChatMode('chat');
+                  setShowModal(true);
+                }}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+              >
+                <MessageCircle size={15} />
+                Новый чат
+              </button>
+              <button
+                onClick={() => {
+                  setShowNewMenu(false);
+                  setNewChatMode('group');
+                  setShowModal(true);
+                }}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+              >
+                <Users size={15} />
+                Создать группу
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       {(archivedCount > 0 || view === 'archived') && (
         <div className="px-3 pb-2 shrink-0">
@@ -321,7 +353,9 @@ export default function ChatList({ currentUserId, open, onClose }) {
           </p>
         )}
       </div>
-      {showModal && <NewChatModal onClose={() => setShowModal(false)} onCreated={handleCreated} />}
+      {showModal && (
+        <NewChatModal mode={newChatMode} onClose={() => setShowModal(false)} onCreated={handleCreated} />
+      )}
       </div>
     </>
   );
