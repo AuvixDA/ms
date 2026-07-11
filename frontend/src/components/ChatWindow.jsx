@@ -7,6 +7,7 @@ import {
   Bookmark,
   Check,
   CheckCheck,
+  CheckSquare,
   Clock,
   Copy,
   FileIcon,
@@ -153,6 +154,8 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   const [reactionPickerFor, setReactionPickerFor] = useState(null);
   const [readByFor, setReadByFor] = useState(null);
   const [mobileActionsFor, setMobileActionsFor] = useState(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
   const [wallpaper, setWallpaper] = useState(() => localStorage.getItem(WALLPAPER_KEY) || 'none');
   const [wallpaperMenuOpen, setWallpaperMenuOpen] = useState(false);
   const searchTimeoutRef = useRef(null);
@@ -746,6 +749,50 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     }
   }
 
+  function enterSelectionMode(messageId) {
+    setMobileActionsFor(null);
+    setSelectionMode(true);
+    setSelectedIds(new Set([messageId]));
+  }
+
+  function toggleSelected(messageId) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  }
+
+  function exitSelectionMode() {
+    setSelectionMode(false);
+    setSelectedIds(new Set());
+  }
+
+  const selectedMessages = messages.filter((m) => selectedIds.has(m.id));
+  // Deleting someone else's message always 403s server-side — hide the option entirely
+  // rather than let people select a mixed batch and have it partially fail.
+  const canDeleteSelection = selectedMessages.length > 0 && selectedMessages.every((m) => m.senderId === currentUserId);
+
+  async function handleBulkDelete() {
+    if (!canDeleteSelection) return;
+    if (!window.confirm(`Удалить ${selectedMessages.length} сообщений?`)) return;
+    const ids = [...selectedIds];
+    exitSelectionMode();
+    await Promise.all(
+      ids.map(async (id) => {
+        const { message: updated } = await api.deleteMessage(conversationId, id);
+        setMessages((prev) => prev.map((m) => (m.id === updated.id ? updated : m)));
+      })
+    );
+  }
+
+  function handleBulkForward() {
+    if (selectedMessages.length === 0) return;
+    setForwardingMessage(selectedMessages);
+    exitSelectionMode();
+  }
+
   function openBubbleContextMenu(e, m, deleted, pending, editing) {
     // Always suppress the browser's own right-click menu on a message bubble — even when
     // there's nothing for our own menu to show (deleted/pending/editing), the native
@@ -774,6 +821,35 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
         </div>
       )}
       <div className="glass-panel border-x-0 border-t-0 px-4 py-3 flex items-center gap-3 shrink-0">
+        {selectionMode ? (
+          <>
+            <button
+              onClick={exitSelectionMode}
+              className="icon-btn p-2 -ml-2 rounded-full transition-all duration-300 shrink-0"
+              title="Отменить выбор"
+            >
+              <X size={19} />
+            </button>
+            <p className="flex-1 font-medium text-white/90">Выбрано: {selectedIds.size}</p>
+            <button
+              onClick={handleBulkForward}
+              disabled={selectedIds.size === 0}
+              className="icon-btn p-2 rounded-full transition-all duration-300 shrink-0 disabled:opacity-30"
+              title="Переслать выбранные"
+            >
+              <Forward size={18} />
+            </button>
+            <button
+              onClick={handleBulkDelete}
+              disabled={!canDeleteSelection}
+              className="icon-btn p-2 rounded-full transition-all duration-300 shrink-0 disabled:opacity-30 hover:text-rose-400"
+              title={canDeleteSelection ? 'Удалить выбранные' : 'Можно удалить только свои сообщения'}
+            >
+              <Trash2 size={18} />
+            </button>
+          </>
+        ) : (
+          <>
         <button
           onClick={onOpenSidebar}
           className="icon-btn p-2 -ml-2 rounded-full transition-all duration-300 md:hidden shrink-0"
@@ -842,6 +918,8 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           >
             <Settings size={17} />
           </button>
+        )}
+          </>
         )}
       </div>
       {conversation?.pinnedMessage && (
@@ -969,9 +1047,26 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                 </div>
               )}
             <div
-              className={`group flex items-end gap-2 ${isFresh ? 'animate-message-in' : ''} ${mine ? 'justify-end' : 'justify-start'}`}
+              className={`group relative flex items-end gap-2 ${isFresh ? 'animate-message-in' : ''} ${mine ? 'justify-end' : 'justify-start'}`}
             >
-              {mine && !deleted && !editing && !pending && (
+              {selectionMode && !pending && (
+                <button
+                  onClick={() => toggleSelected(m.id)}
+                  className="absolute inset-0 z-10 cursor-pointer"
+                  aria-label="Выбрать сообщение"
+                />
+              )}
+              {selectionMode && !pending && (
+                <button
+                  onClick={() => toggleSelected(m.id)}
+                  className={`flex items-center justify-center w-6 h-6 rounded-full border-2 mb-1 shrink-0 transition-colors duration-150 ${
+                    selectedIds.has(m.id) ? 'bg-neon-violet border-neon-violet' : 'border-white/30'
+                  }`}
+                >
+                  {selectedIds.has(m.id) && <Check size={14} className="text-white" />}
+                </button>
+              )}
+              {!selectionMode && mine && !deleted && !editing && !pending && (
                 <div className="hidden md:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 mb-1">
                   <button
                     onClick={() => setReplyingTo(buildReplyContext(m))}
@@ -981,7 +1076,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                     <Reply size={13} />
                   </button>
                   <button
-                    onClick={() => setForwardingMessage(m)}
+                    onClick={() => setForwardingMessage([m])}
                     className="icon-btn p-1.5 rounded-full"
                     title="Переслать"
                   >
@@ -1223,7 +1318,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                   </div>
                 )}
               </div>
-              {!mine && !deleted && !pending && (
+              {!selectionMode && !mine && !deleted && !pending && (
                 <div className="hidden md:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 mb-1 shrink-0">
                   <button
                     onClick={() => setReplyingTo(buildReplyContext(m))}
@@ -1233,7 +1328,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                     <Reply size={13} />
                   </button>
                   <button
-                    onClick={() => setForwardingMessage(m)}
+                    onClick={() => setForwardingMessage([m])}
                     className="icon-btn p-1.5 rounded-full"
                     title="Переслать"
                   >
@@ -1370,7 +1465,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
         />
       )}
       {forwardingMessage && (
-        <ForwardModal message={forwardingMessage} onClose={() => setForwardingMessage(null)} />
+        <ForwardModal messages={forwardingMessage} onClose={() => setForwardingMessage(null)} />
       )}
       {lightboxImage && (
         <Lightbox src={lightboxImage.src} alt={lightboxImage.alt} onClose={() => setLightboxImage(null)} />
@@ -1423,7 +1518,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
             )}
             <button
               onClick={() => {
-                setForwardingMessage(mobileActionsFor);
+                setForwardingMessage([mobileActionsFor]);
                 setMobileActionsFor(null);
               }}
               className="w-full flex items-center gap-3 px-2 py-3 rounded-xl text-white/85 active:bg-white/5"
@@ -1446,6 +1541,13 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
               <span className="text-sm">
                 {conversation?.pinnedMessage?.id === mobileActionsFor.id ? 'Открепить' : 'Закрепить'}
               </span>
+            </button>
+            <button
+              onClick={() => enterSelectionMode(mobileActionsFor.id)}
+              className="w-full flex items-center gap-3 px-2 py-3 rounded-xl text-white/85 active:bg-white/5"
+            >
+              <CheckSquare size={18} />
+              <span className="text-sm">Выбрать</span>
             </button>
             {mobileActionsFor.senderId === currentUserId && (
               <>

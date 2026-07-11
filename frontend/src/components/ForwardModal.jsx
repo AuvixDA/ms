@@ -14,7 +14,7 @@ function conversationTitle(c) {
 // Forwarding sends a brand-new message to the target conversation over the same socket
 // used for normal sends — the server checks membership per conversationId in the payload,
 // not per socket room, so this works even for a conversation that isn't currently open.
-export default function ForwardModal({ message, onClose }) {
+export default function ForwardModal({ messages, onClose }) {
   const [conversations, setConversations] = useState([]);
   const [query, setQuery] = useState('');
   const [sentTo, setSentTo] = useState(new Set());
@@ -28,24 +28,29 @@ export default function ForwardModal({ message, onClose }) {
     conversationTitle(c).toLowerCase().includes(query.trim().toLowerCase())
   );
 
-  function forwardTo(conversationId) {
+  // Sent one at a time (not in parallel) so they land in the target chat in the same
+  // order they were selected in, instead of racing each other over the socket.
+  async function forwardTo(conversationId) {
     setSendingId(conversationId);
-    connectSocket().emit(
-      'message:send',
-      {
-        conversationId,
-        text: message.text,
-        fileUrl: message.fileUrl,
-        fileName: message.fileName,
-        forwardedFromName: message.sender?.name || 'Пользователь',
-      },
-      (response) => {
-        setSendingId(null);
-        if (!response?.error) {
-          setSentTo((prev) => new Set(prev).add(conversationId));
-        }
-      }
-    );
+    let allOk = true;
+    for (const message of messages) {
+      const response = await new Promise((resolve) => {
+        connectSocket().emit(
+          'message:send',
+          {
+            conversationId,
+            text: message.text,
+            fileUrl: message.fileUrl,
+            fileName: message.fileName,
+            forwardedFromName: message.sender?.name || 'Пользователь',
+          },
+          resolve
+        );
+      });
+      if (response?.error) allOk = false;
+    }
+    setSendingId(null);
+    if (allOk) setSentTo((prev) => new Set(prev).add(conversationId));
   }
 
   return (
@@ -54,7 +59,7 @@ export default function ForwardModal({ message, onClose }) {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <Forward size={18} className="text-cyan-300" />
-            Переслать
+            {messages.length > 1 ? `Переслать ${messages.length} сообщения` : 'Переслать'}
           </h2>
           <button onClick={onClose} className="icon-btn p-1.5 rounded-full transition-all duration-300">
             <X size={18} />
