@@ -64,7 +64,7 @@ export default function NewChatModal({ onClose, onCreated }) {
           <button
             onClick={handleCreate}
             disabled={selected.length === 0}
-            className="px-5 py-2 rounded-full text-sm font-medium bg-gradient-to-br from-violet-600 to-cyan-500 text-white shadow-glow-violet disabled:opacity-40 disabled:shadow-none hover:brightness-110 transition-all duration-300"
+            className="px-5 py-2 rounded-full text-sm font-medium bg-gradient-to-br from-violet-600 to-cyan-500 text-[#fff] shadow-glow-violet disabled:opacity-40 disabled:shadow-none hover:brightness-110 transition-all duration-300"
           >
             Создать
           </button>

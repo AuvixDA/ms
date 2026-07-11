@@ -61,6 +61,42 @@ body {
   color-scheme: dark;
 }
 
+/* Everything below drives the light theme, toggled by adding .light to <html> (see
+   theme.js). Utilities like text-white/40 or bg-white/5 compile to
+   color-mix(in oklab, var(--color-white) 40%, transparent), so overriding --color-white
+   here retints every one of them app-wide without touching each component — the only
+   className changes needed anywhere are the handful of spots that render white text
+   directly on a solid, non-adaptive gradient (buttons, badges) and must stay white in
+   both themes; those use a literal text-[#fff] instead of text-white. */
+:root.light {
+  --color-white: #12131a;
+  --color-surface-950: #f4f5f8;
+  --color-surface-900: #ffffff;
+  --color-surface-800: #eceef2;
+  --color-surface-700: #dde1e8;
+
+  --glass-panel-bg: rgb(18 19 26 / 0.035);
+  --glass-panel-border: rgb(18 19 26 / 0.08);
+  --glass-card-bg: rgb(18 19 26 / 0.045);
+  --glass-card-border: rgb(18 19 26 / 0.1);
+  --glass-input-bg: rgb(18 19 26 / 0.035);
+  --glass-input-border: rgb(18 19 26 / 0.12);
+  --msg-bubble-bg: rgb(18 19 26 / 0.045);
+  --msg-bubble-border: rgb(18 19 26 / 0.1);
+  --icon-color: rgb(18 19 26 / 0.55);
+}
+
+:root.light body {
+  color-scheme: light;
+}
+
+:root.light .neon-bg {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 15% 0%, rgba(139, 92, 246, 0.12), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 100% 20%, rgba(34, 211, 238, 0.1), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 20% 100%, rgba(236, 72, 153, 0.07), transparent 60%);
+}
+
 /* Slim, unobtrusive scrollbars for the glass panels */
 * {
   scrollbar-width: thin;
@@ -87,39 +123,39 @@ body {
 
 @layer components {
   .glass-panel {
-    background-color: rgb(255 255 255 / 0.04);
+    background-color: var(--glass-panel-bg, rgb(255 255 255 / 0.04));
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgb(255 255 255 / 0.08);
+    border: 1px solid var(--glass-panel-border, rgb(255 255 255 / 0.08));
   }
 
   .glass-card {
-    background-color: rgb(255 255 255 / 0.06);
+    background-color: var(--glass-card-bg, rgb(255 255 255 / 0.06));
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
-    border: 1px solid rgb(255 255 255 / 0.1);
+    border: 1px solid var(--glass-card-border, rgb(255 255 255 / 0.1));
   }
 
   .glass-input {
-    background-color: rgb(255 255 255 / 0.05);
+    background-color: var(--glass-input-bg, rgb(255 255 255 / 0.05));
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgb(255 255 255 / 0.1);
+    border: 1px solid var(--glass-input-border, rgb(255 255 255 / 0.1));
   }
 
   /* Same look as .glass-card without backdrop-filter. Message bubbles can number in the
      dozens and re-paint on every scroll/animation frame — blur is by far the most
      expensive part of that repaint, so bubbles use this instead to keep scrolling smooth. */
   .msg-bubble {
-    background-color: rgb(255 255 255 / 0.06);
-    border: 1px solid rgb(255 255 255 / 0.1);
+    background-color: var(--msg-bubble-bg, rgb(255 255 255 / 0.06));
+    border: 1px solid var(--msg-bubble-border, rgb(255 255 255 / 0.1));
   }
 
   .icon-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: rgb(255 255 255 / 0.6);
+    color: var(--icon-color, rgb(255 255 255 / 0.6));
     transition: color 0.3s, filter 0.3s, transform 0.3s;
   }
 

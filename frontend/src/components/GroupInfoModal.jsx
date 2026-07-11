@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { LogOut, Pencil, UserPlus, Users, X } from 'lucide-react';
+import { Crown, LogOut, Pencil, UserPlus, Users, X } from 'lucide-react';
 import { api } from '../api/client';
 import Avatar from './Avatar';
 import UserSearchList from './UserSearchList';
@@ -11,6 +11,10 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
   const [toAdd, setToAdd] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Groups created before ownership existed have no ownerId — leave those unrestricted
+  // rather than hiding moderation controls nobody can otherwise reach. Mirrors the
+  // equivalent bypass in the backend's rename/remove-participant routes.
+  const canModerate = !conversation.ownerId || conversation.ownerId === currentUserId;
 
   async function saveName() {
     if (!name.trim() || name.trim() === conversation.name) {
@@ -98,12 +102,12 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
               <button
                 onClick={saveName}
                 disabled={busy}
-                className="px-4 py-2 rounded-full text-sm font-medium bg-gradient-to-br from-violet-600 to-cyan-500 text-white shrink-0"
+                className="px-4 py-2 rounded-full text-sm font-medium bg-gradient-to-br from-violet-600 to-cyan-500 text-[#fff] shrink-0"
               >
                 OK
               </button>
             </div>
-          ) : (
+          ) : canModerate ? (
             <button
               onClick={() => setEditingName(true)}
               className="flex items-center gap-2 text-white/90 hover:text-white transition-colors duration-300"
@@ -111,6 +115,8 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
               <span className="font-medium">{conversation.name || 'Группа'}</span>
               <Pencil size={14} className="text-white/40" />
             </button>
+          ) : (
+            <span className="font-medium text-white/90">{conversation.name || 'Группа'}</span>
           )}
         </div>
 
@@ -120,23 +126,33 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
         <div className="space-y-1 mb-4 max-h-48 overflow-y-auto">
           <div className="w-full flex items-center gap-3 px-3 py-2 rounded-xl">
             <Avatar name="Вы" size="sm" />
-            <span className="flex-1 text-left text-white/60 text-sm">Вы</span>
+            <span className="flex-1 text-left text-white/60 text-sm flex items-center gap-1.5">
+              Вы
+              {conversation.ownerId === currentUserId && (
+                <Crown size={13} className="text-amber-400" />
+              )}
+            </span>
           </div>
           {conversation.participants.map((p) => (
             <div key={p.id} className="w-full flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/5">
               <Avatar name={p.name} src={p.avatarUrl} size="sm" />
               <span className="flex-1 text-left min-w-0">
-                <span className="block text-white/90 truncate">{p.name}</span>
+                <span className="flex items-center gap-1.5 text-white/90 truncate">
+                  {p.name}
+                  {conversation.ownerId === p.id && <Crown size={13} className="text-amber-400 shrink-0" />}
+                </span>
                 <span className="block text-white/40 text-xs truncate">@{p.username}</span>
               </span>
-              <button
-                onClick={() => handleRemove(p.id)}
-                disabled={busy}
-                className="icon-btn p-1.5 rounded-full transition-all duration-300 shrink-0"
-                title="Удалить из группы"
-              >
-                <X size={14} />
-              </button>
+              {canModerate && (
+                <button
+                  onClick={() => handleRemove(p.id)}
+                  disabled={busy}
+                  className="icon-btn p-1.5 rounded-full transition-all duration-300 shrink-0"
+                  title="Удалить из группы"
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -165,7 +181,7 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
               <button
                 onClick={handleAdd}
                 disabled={toAdd.length === 0 || busy}
-                className="px-5 py-2 rounded-full text-sm font-medium bg-gradient-to-br from-violet-600 to-cyan-500 text-white disabled:opacity-40 transition-all duration-300"
+                className="px-5 py-2 rounded-full text-sm font-medium bg-gradient-to-br from-violet-600 to-cyan-500 text-[#fff] disabled:opacity-40 transition-all duration-300"
               >
                 Добавить
               </button>

@@ -61,10 +61,19 @@ export const api = {
     request(`/conversations/${conversationId}/participants/${userId}`, { method: 'DELETE' }),
   getMessages: (conversationId, before) =>
     request(`/conversations/${conversationId}/messages${before ? `?before=${encodeURIComponent(before)}` : ''}`),
+  getMessagesAround: (conversationId, messageId) =>
+    request(`/conversations/${conversationId}/messages?around=${encodeURIComponent(messageId)}`),
+  searchMessages: (conversationId, query) =>
+    request(`/conversations/${conversationId}/messages/search?q=${encodeURIComponent(query)}`),
   editMessage: (conversationId, messageId, text) =>
     request(`/conversations/${conversationId}/messages/${messageId}`, { method: 'PATCH', body: { text } }),
   deleteMessage: (conversationId, messageId) =>
     request(`/conversations/${conversationId}/messages/${messageId}`, { method: 'DELETE' }),
+  toggleReaction: (conversationId, messageId, emoji) =>
+    request(`/conversations/${conversationId}/messages/${messageId}/reactions`, {
+      method: 'POST',
+      body: { emoji },
+    }),
   uploadFile: (file) => {
     const formData = new FormData();
     formData.append('file', file);

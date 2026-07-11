@@ -64,7 +64,7 @@ export default function Login() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full flex items-center justify-center gap-2 bg-gradient-to-br from-violet-600 to-cyan-500 text-white py-2.5 rounded-full font-medium shadow-glow-violet hover:brightness-110 disabled:opacity-50 transition-all duration-300"
+          className="w-full flex items-center justify-center gap-2 bg-gradient-to-br from-violet-600 to-cyan-500 text-[#fff] py-2.5 rounded-full font-medium shadow-glow-violet hover:brightness-110 disabled:opacity-50 transition-all duration-300"
         >
           <LogIn size={17} />
           {loading ? 'Входим...' : 'Войти'}

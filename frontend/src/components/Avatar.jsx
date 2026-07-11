@@ -45,7 +45,7 @@ export default function Avatar({ name, src, size = 'md', online = false, classNa
         />
       ) : (
         <span
-          className={`${sizeClasses} rounded-full flex items-center justify-center font-semibold text-white bg-gradient-to-br ${gradient} ring-1 ring-white/10`}
+          className={`${sizeClasses} rounded-full flex items-center justify-center font-semibold text-[#fff] bg-gradient-to-br ${gradient} ring-1 ring-white/10`}
         >
           {initials(name)}
         </span>

@@ -3,26 +3,11 @@ const prisma = require('../prisma');
 const { requireAuth } = require('../middleware/auth');
 const { getIo, joinUserToConversation, leaveUserFromConversation } = require('../socket');
 const asyncHandler = require('../asyncHandler');
+const { serializeMessage, MESSAGE_SENDER_INCLUDE, REPLY_PREVIEW_INCLUDE, REACTIONS_INCLUDE } = require('../messageSerializer');
 
 const router = express.Router();
 
 const MESSAGES_PAGE_SIZE = 50;
-
-function serializeMessage(m) {
-  const deleted = !!m.deletedAt;
-  return {
-    id: m.id,
-    conversationId: m.conversationId,
-    senderId: m.senderId,
-    sender: m.sender,
-    text: deleted ? null : m.text,
-    fileUrl: deleted ? null : m.fileUrl,
-    fileName: deleted ? null : m.fileName,
-    createdAt: m.createdAt,
-    editedAt: m.editedAt,
-    deletedAt: m.deletedAt,
-  };
-}
 
 function serializeConversation(c, currentUserId) {
   const self = c.participants.find((p) => p.userId === currentUserId);
@@ -34,6 +19,7 @@ function serializeConversation(c, currentUserId) {
     id: c.id,
     isGroup: c.isGroup,
     name: c.name,
+    ownerId: c.ownerId,
     participants: c.participants
       .filter((p) => p.userId !== currentUserId)
       .map((p) => ({
@@ -133,6 +119,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
     data: {
       isGroup: !!isGroup,
       name: isGroup ? name : null,
+      ownerId: isGroup ? req.userId : null,
       participants: {
         create: allParticipantIds.map((userId) => ({ userId })),
       },
@@ -185,6 +172,9 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   }
   if (!existing.isGroup) {
     return res.status(400).json({ error: 'Only group conversations can be renamed' });
+  }
+  if (existing.ownerId && existing.ownerId !== req.userId) {
+    return res.status(403).json({ error: 'Only the group owner can rename it' });
   }
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'name is required' });
@@ -326,6 +316,14 @@ router.delete('/:id/participants/:userId', requireAuth, asyncHandler(async (req,
   if (!existing.isGroup) {
     return res.status(400).json({ error: 'Only group conversations support removing participants' });
   }
+  // Anyone can remove themselves (leave); removing someone else requires being the owner.
+  // Groups created before ownership existed have no ownerId — leave those unrestricted
+  // rather than locking everyone out of moderating them.
+  const isSelf = userId === req.userId;
+  const isOwner = !existing.ownerId || existing.ownerId === req.userId;
+  if (!isSelf && !isOwner) {
+    return res.status(403).json({ error: 'Only the group owner can remove other participants' });
+  }
 
   await prisma.conversationParticipant
     .delete({ where: { userId_conversationId: { userId, conversationId: id } } })
@@ -337,11 +335,12 @@ router.delete('/:id/participants/:userId', requireAuth, asyncHandler(async (req,
   res.json({ ok: true });
 }));
 
-// Message history for a conversation, newest page first. Pass `before` (a message id) to
-// load the page of messages that precede it, for infinite-scroll-style pagination.
+// Message history for a conversation. Pass `before` (a message id) to load the page that
+// precedes it, for infinite-scroll-style pagination — or `around` (a message id, typically
+// from a search result) to jump straight to a window centered on that message instead.
 router.get('/:id/messages', requireAuth, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { before } = req.query;
+  const { before, around } = req.query;
   const limit = Math.min(Number(req.query.limit) || MESSAGES_PAGE_SIZE, 100);
 
   const membership = await prisma.conversationParticipant.findUnique({
@@ -349,6 +348,36 @@ router.get('/:id/messages', requireAuth, asyncHandler(async (req, res) => {
   });
   if (!membership) {
     return res.status(403).json({ error: 'Not a participant of this conversation' });
+  }
+
+  if (around) {
+    const target = await prisma.message.findUnique({ where: { id: around } });
+    if (!target || target.conversationId !== id) {
+      return res.status(400).json({ error: 'Invalid around cursor' });
+    }
+
+    const half = Math.floor(limit / 2);
+    const [olderHalf, newerHalf] = await Promise.all([
+      prisma.message.findMany({
+        where: { conversationId: id, createdAt: { lt: target.createdAt } },
+        orderBy: { createdAt: 'desc' },
+        take: half,
+        include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
+      }),
+      prisma.message.findMany({
+        where: { conversationId: id, createdAt: { gte: target.createdAt } },
+        orderBy: { createdAt: 'asc' },
+        take: limit - half,
+        include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
+      }),
+    ]);
+
+    const messages = [...olderHalf.reverse(), ...newerHalf].map(serializeMessage);
+    return res.json({
+      messages,
+      hasMore: olderHalf.length === half,
+      hasNewer: newerHalf.length === limit - half,
+    });
   }
 
   let cursorDate;
@@ -367,13 +396,44 @@ router.get('/:id/messages', requireAuth, asyncHandler(async (req, res) => {
     },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
-    include: { sender: { select: { id: true, name: true, avatarUrl: true } } },
+    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
   });
 
   const hasMore = page.length > limit;
   const messages = page.slice(0, limit).reverse().map(serializeMessage);
 
-  res.json({ messages, hasMore });
+  res.json({ messages, hasMore, hasNewer: false });
+}));
+
+// Search messages by text within a single conversation, most recent match first.
+router.get('/:id/messages/search', requireAuth, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const q = (req.query.q || '').trim();
+
+  const membership = await requireMembership(id, req.userId);
+  if (!membership) {
+    return res.status(403).json({ error: 'Not a participant of this conversation' });
+  }
+  if (!q) {
+    return res.json({ messages: [] });
+  }
+
+  const matches = await prisma.message.findMany({
+    where: { conversationId: id, deletedAt: null, text: { contains: q, mode: 'insensitive' } },
+    orderBy: { createdAt: 'desc' },
+    take: 30,
+    include: { sender: { select: { id: true, name: true } } },
+  });
+
+  res.json({
+    messages: matches.map((m) => ({
+      id: m.id,
+      senderId: m.senderId,
+      senderName: m.sender?.name || null,
+      text: m.text,
+      createdAt: m.createdAt,
+    })),
+  });
 }));
 
 // Edit the text of your own message.
@@ -403,7 +463,7 @@ router.patch('/:id/messages/:messageId', requireAuth, asyncHandler(async (req, r
   const updated = await prisma.message.update({
     where: { id: messageId },
     data: { text: text.trim(), editedAt: new Date() },
-    include: { sender: { select: { id: true, name: true, avatarUrl: true } } },
+    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
   });
 
   const message = serializeMessage(updated);
@@ -431,11 +491,55 @@ router.delete('/:id/messages/:messageId', requireAuth, asyncHandler(async (req, 
   const updated = await prisma.message.update({
     where: { id: messageId },
     data: { deletedAt: new Date() },
-    include: { sender: { select: { id: true, name: true, avatarUrl: true } } },
+    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
   });
 
   const message = serializeMessage(updated);
   getIo()?.to(`conversation:${id}`).emit('message:deleted', message);
+  res.json({ message });
+}));
+
+// Toggle a reaction: adding it if the current user hasn't reacted with this exact emoji
+// on this message yet, removing it if they have. Broadcast as message:updated (rather than
+// a bespoke event) since the frontend already knows how to patch a message in place.
+router.post('/:id/messages/:messageId/reactions', requireAuth, asyncHandler(async (req, res) => {
+  const { id, messageId } = req.params;
+  const { emoji } = req.body;
+
+  const membership = await requireMembership(id, req.userId);
+  if (!membership) {
+    return res.status(403).json({ error: 'Not a participant of this conversation' });
+  }
+
+  const existing = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!existing || existing.conversationId !== id) {
+    return res.status(404).json({ error: 'Message not found' });
+  }
+  if (existing.deletedAt) {
+    return res.status(400).json({ error: 'Cannot react to a deleted message' });
+  }
+  if (!emoji || typeof emoji !== 'string' || !emoji.trim()) {
+    return res.status(400).json({ error: 'emoji is required' });
+  }
+  const trimmedEmoji = emoji.trim().slice(0, 8);
+
+  const existingReaction = await prisma.reaction.findUnique({
+    where: { messageId_userId_emoji: { messageId, userId: req.userId, emoji: trimmedEmoji } },
+  });
+
+  if (existingReaction) {
+    await prisma.reaction.delete({ where: { id: existingReaction.id } });
+  } else {
+    await prisma.reaction.create({ data: { messageId, userId: req.userId, emoji: trimmedEmoji } });
+  }
+
+  const updated = await prisma.message.findUnique({
+    where: { id: messageId },
+    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
+  });
+
+  const message = serializeMessage(updated);
+  getIo()?.to(`conversation:${id}`).emit('message:updated', message);
   res.json({ message });
 }));
 

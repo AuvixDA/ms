@@ -8,23 +8,26 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(uuid())
-  email         String   @unique
-  username      String   @unique
-  passwordHash  String
-  name          String
-  avatarUrl     String?
-  createdAt     DateTime @default(now())
+  id           String    @id @default(uuid())
+  email        String    @unique
+  username     String    @unique
+  passwordHash String
+  name         String
+  avatarUrl    String?
+  lastSeenAt   DateTime?
+  createdAt    DateTime  @default(now())
 
-  participants     ConversationParticipant[]
-  messages         Message[]
+  participants      ConversationParticipant[]
+  messages          Message[]
   pushSubscriptions PushSubscription[]
+  reactions         Reaction[]
 }
 
 model Conversation {
   id        String   @id @default(uuid())
   isGroup   Boolean  @default(false)
   name      String?
+  ownerId   String?
   createdAt DateTime @default(now())
 
   participants ConversationParticipant[]
@@ -48,18 +51,36 @@ model ConversationParticipant {
 }
 
 model Message {
-  id             String    @id @default(uuid())
-  conversationId String
-  senderId       String
-  text           String?
-  fileUrl        String?
-  fileName       String?
-  createdAt      DateTime  @default(now())
-  editedAt       DateTime?
-  deletedAt      DateTime?
+  id                String    @id @default(uuid())
+  conversationId    String
+  senderId          String
+  text              String?
+  fileUrl           String?
+  fileName          String?
+  replyToId         String?
+  forwardedFromName String?
+  createdAt         DateTime  @default(now())
+  editedAt          DateTime?
+  deletedAt         DateTime?
 
   conversation Conversation @relation(fields: [conversationId], references: [id])
   sender       User         @relation(fields: [senderId], references: [id])
+  replyTo      Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies      Message[]    @relation("MessageReplies")
+  reactions    Reaction[]
+}
+
+model Reaction {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([messageId, userId, emoji])
 }
 
 model PushSubscription {

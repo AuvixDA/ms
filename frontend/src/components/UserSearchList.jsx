@@ -58,7 +58,7 @@ export default function UserSearchList({ excludeIds = [], selectedIds = [], onTo
                   isSelected ? 'bg-gradient-to-br from-violet-500 to-cyan-400' : 'ring-1 ring-white/20'
                 }`}
               >
-                {isSelected && <Check size={13} className="text-white" />}
+                {isSelected && <Check size={13} className="text-[#fff]" />}
               </span>
             </button>
           );

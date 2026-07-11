@@ -1,8 +1,9 @@
 import { useParams } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Check, Copy, LogOut, Menu, MessageSquareDashed, Settings, UserCircle2 } from 'lucide-react';
+import { Camera, Check, Copy, LogOut, Menu, MessageSquareDashed, Moon, Settings, Sun, UserCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
+import { getTheme, toggleTheme } from '../theme';
 import ChatList from '../components/ChatList';
 import ChatWindow from '../components/ChatWindow';
 import Avatar from '../components/Avatar';
@@ -16,7 +17,12 @@ export default function ChatPage() {
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarError, setAvatarError] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [theme, setThemeState] = useState(getTheme);
   const avatarInputRef = useRef(null);
+
+  function handleToggleTheme() {
+    setThemeState(toggleTheme());
+  }
 
   const inviteLink = `${window.location.origin}/u/${user.username}`;
 
@@ -83,6 +89,13 @@ export default function ChatPage() {
                 Мой профиль
               </button>
               <button
+                onClick={handleToggleTheme}
+                className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+              >
+                {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+                {theme === 'light' ? 'Тёмная тема' : 'Светлая тема'}
+              </button>
+              <button
                 onClick={logout}
                 className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
               >
@@ -134,7 +147,7 @@ export default function ChatPage() {
               >
                 <Avatar name={user.name} src={user.avatarUrl} size="lg" />
                 <span className="absolute inset-0 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                  <Camera size={18} className="text-white" />
+                  <Camera size={18} className="text-[#fff]" />
                 </span>
               </button>
               <input

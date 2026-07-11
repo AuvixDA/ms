@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Archive, ArchiveRestore, Bell, BellOff, MoreVertical, Plus, Search, Trash2 } from 'lucide-react';
 import { api } from '../api/client';
 import { connectSocket } from '../socket';
+import { playNotificationSound } from '../notificationSound';
 import NewChatModal from './NewChatModal';
 import Avatar from './Avatar';
 
@@ -22,14 +23,49 @@ export default function ChatList({ currentUserId, open, onClose }) {
   const menuRef = useRef(null);
   const navigate = useNavigate();
   const { conversationId } = useParams();
+  // Read inside the socket effect below without making it re-subscribe on every change —
+  // that effect only depends on currentUserId, so it would otherwise close over stale
+  // values of the conversation list and the currently open chat.
+  const conversationsRef = useRef(conversations);
+  const conversationIdRef = useRef(conversationId);
 
   function refresh() {
-    api.listConversations().then((data) => setConversations(data.conversations));
+    api.listConversations().then((data) => {
+      setConversations(data.conversations);
+
+      // presence:update only reports *changes*, so without this, everyone who was already
+      // online before this tab connected would incorrectly show as offline until their
+      // next state change. Backfill the current state for every 1-1 chat once on load.
+      const otherIds = data.conversations
+        .filter((c) => !c.isGroup)
+        .map((c) => c.participants[0]?.id)
+        .filter(Boolean);
+      if (otherIds.length === 0) return;
+      connectSocket().emit('presence:query', { userIds: otherIds }, (result) => {
+        if (!result) return;
+        setOnlineIds((prev) => {
+          const next = new Set(prev);
+          Object.entries(result).forEach(([id, info]) => {
+            if (info.online) next.add(id);
+            else next.delete(id);
+          });
+          return next;
+        });
+      });
+    });
   }
 
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -44,6 +80,19 @@ export default function ChatList({ currentUserId, open, onClose }) {
 
     function handleListChanged() {
       refresh();
+    }
+
+    // Plays a chime for messages from someone else, unless that chat is muted or it's the
+    // exact conversation the user is already looking at with the tab in the foreground.
+    function handleNewMessage(message) {
+      refresh();
+      if (message.senderId === currentUserId) return;
+      const conv = conversationsRef.current.find((c) => c.id === message.conversationId);
+      if (conv?.muted) return;
+      const activelyViewing =
+        conversationIdRef.current === message.conversationId && document.visibilityState === 'visible';
+      if (activelyViewing) return;
+      playNotificationSound();
     }
 
     function handlePresence({ userId, online }) {
@@ -62,7 +111,7 @@ export default function ChatList({ currentUserId, open, onClose }) {
       );
     }
 
-    socket.on('message:new', handleListChanged);
+    socket.on('message:new', handleNewMessage);
     socket.on('message:updated', handleListChanged);
     socket.on('message:deleted', handleListChanged);
     socket.on('presence:update', handlePresence);
@@ -71,7 +120,7 @@ export default function ChatList({ currentUserId, open, onClose }) {
     socket.on('conversation:removed', handleListChanged);
     socket.on('conversation:read', handleConversationRead);
     return () => {
-      socket.off('message:new', handleListChanged);
+      socket.off('message:new', handleNewMessage);
       socket.off('message:updated', handleListChanged);
       socket.off('message:deleted', handleListChanged);
       socket.off('presence:update', handlePresence);
@@ -216,7 +265,7 @@ export default function ChatList({ currentUserId, open, onClose }) {
                   </p>
                 </div>
                 {hasUnread && (
-                  <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-gradient-to-br from-violet-500 to-cyan-500 text-white text-[11px] font-semibold flex items-center justify-center">
+                  <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-gradient-to-br from-violet-500 to-cyan-500 text-[#fff] text-[11px] font-semibold flex items-center justify-center">
                     {c.unreadCount > 99 ? '99+' : c.unreadCount}
                   </span>
                 )}

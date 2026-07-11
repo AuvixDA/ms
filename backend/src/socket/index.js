@@ -2,6 +2,7 @@ const { Server } = require('socket.io');
 const prisma = require('../prisma');
 const { verifySocketToken } = require('../middleware/auth');
 const { notifyUser } = require('../push');
+const { serializeMessage, MESSAGE_SENDER_INCLUDE, REPLY_PREVIEW_INCLUDE } = require('../messageSerializer');
 
 // userId -> Set of connected socket ids (a user can have multiple tabs/devices)
 const onlineUsers = new Map();
@@ -106,7 +107,7 @@ function initSocket(httpServer, frontendOrigin) {
       socket.to(`conversation:${conversationId}`).emit('typing', { conversationId, userId, isTyping });
     });
 
-    socket.on('message:send', async ({ conversationId, text, fileUrl, fileName }, ack) => {
+    socket.on('message:send', async ({ conversationId, text, fileUrl, fileName, replyToId, forwardedFromName }, ack) => {
       try {
         const membership = await prisma.conversationParticipant.findUnique({
           where: { userId_conversationId: { userId, conversationId } },
@@ -116,6 +117,20 @@ function initSocket(httpServer, frontendOrigin) {
           return;
         }
 
+        // Only honor replyToId if it actually points at a message in this same
+        // conversation — silently drop it otherwise rather than failing the whole send.
+        let validReplyToId = null;
+        if (replyToId) {
+          const replyTarget = await prisma.message.findUnique({ where: { id: replyToId } });
+          if (replyTarget && replyTarget.conversationId === conversationId) validReplyToId = replyToId;
+        }
+
+        // Forwarding intentionally stores only the original sender's display name as plain
+        // text (no relation back to the source message/conversation) — the recipient of a
+        // forward has no business being able to reach into a conversation they're not in.
+        const forwardedFrom =
+          typeof forwardedFromName === 'string' && forwardedFromName.trim() ? forwardedFromName.trim().slice(0, 100) : null;
+
         const message = await prisma.message.create({
           data: {
             conversationId,
@@ -123,12 +138,15 @@ function initSocket(httpServer, frontendOrigin) {
             text: text || null,
             fileUrl: fileUrl || null,
             fileName: fileName || null,
+            replyToId: validReplyToId,
+            forwardedFromName: forwardedFrom,
           },
-          include: { sender: { select: { id: true, name: true, avatarUrl: true } } },
+          include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE },
         });
 
-        io.to(`conversation:${conversationId}`).emit('message:new', message);
-        if (ack) ack({ message });
+        const serialized = serializeMessage(message);
+        io.to(`conversation:${conversationId}`).emit('message:new', serialized);
+        if (ack) ack({ message: serialized });
 
         // A new message un-hides the conversation for anyone who had previously
         // "deleted" it from their own chat list, and rejoins their sockets to the room
@@ -164,10 +182,20 @@ function initSocket(httpServer, frontendOrigin) {
       }
     });
 
-    socket.on('presence:query', ({ userIds }, ack) => {
+    socket.on('presence:query', async ({ userIds }, ack) => {
+      const ids = userIds || [];
+      const offlineIds = ids.filter((id) => !isOnline(id));
+      let lastSeenById = {};
+      if (offlineIds.length > 0) {
+        const users = await prisma.user.findMany({
+          where: { id: { in: offlineIds } },
+          select: { id: true, lastSeenAt: true },
+        });
+        lastSeenById = Object.fromEntries(users.map((u) => [u.id, u.lastSeenAt]));
+      }
       const result = {};
-      (userIds || []).forEach((id) => {
-        result[id] = isOnline(id);
+      ids.forEach((id) => {
+        result[id] = { online: isOnline(id), lastSeenAt: lastSeenById[id] || null };
       });
       if (ack) ack(result);
     });
@@ -175,7 +203,11 @@ function initSocket(httpServer, frontendOrigin) {
     socket.on('disconnect', () => {
       markOffline(userId, socket.id);
       if (!isOnline(userId)) {
-        socket.broadcast.emit('presence:update', { userId, online: false });
+        const lastSeenAt = new Date();
+        prisma.user
+          .update({ where: { id: userId }, data: { lastSeenAt } })
+          .catch((err) => console.error('[socket] failed to persist lastSeenAt', err));
+        socket.broadcast.emit('presence:update', { userId, online: false, lastSeenAt });
       }
     });
 
