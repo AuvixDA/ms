@@ -1,9 +1,12 @@
 import { useParams } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Check, Copy, LogOut, Menu, MessageSquareDashed, Moon, Settings, Sun, UserCircle2 } from 'lucide-react';
+import { Bell, Camera, Check, Copy, LogOut, Menu, MessageSquareDashed, Moon, Settings, Sun, UserCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 import { getTheme, toggleTheme } from '../theme';
+import { subscribeToPush } from '../push';
+
+const PUSH_PROMPT_DISMISSED_KEY = 'pushPromptDismissed';
 import ChatList from '../components/ChatList';
 import ChatWindow from '../components/ChatWindow';
 import Avatar from '../components/Avatar';
@@ -18,6 +21,7 @@ export default function ChatPage() {
   const [avatarError, setAvatarError] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [theme, setThemeState] = useState(getTheme);
+  const [showPushPrompt, setShowPushPrompt] = useState(false);
   const avatarInputRef = useRef(null);
 
   function handleToggleTheme() {
@@ -29,6 +33,26 @@ export default function ChatPage() {
   useEffect(() => {
     setSidebarOpen(!conversationId);
   }, [conversationId]);
+
+  // Ask for push permission through our own explanation first — requesting it cold gets
+  // reflexively denied far more often than after the user understands what it's for.
+  useEffect(() => {
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission !== 'default') return;
+    if (localStorage.getItem(PUSH_PROMPT_DISMISSED_KEY)) return;
+    setShowPushPrompt(true);
+  }, []);
+
+  function dismissPushPrompt() {
+    localStorage.setItem(PUSH_PROMPT_DISMISSED_KEY, '1');
+    setShowPushPrompt(false);
+  }
+
+  function enablePush() {
+    setShowPushPrompt(false);
+    localStorage.setItem(PUSH_PROMPT_DISMISSED_KEY, '1');
+    subscribeToPush().catch((err) => console.warn('Push subscription failed:', err.message));
+  }
 
   async function handleAvatarChange(e) {
     const file = e.target.files[0];
@@ -184,6 +208,35 @@ export default function ChatPage() {
                 {copied ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {showPushPrompt && (
+        <div className="fixed bottom-4 right-4 z-50 glass-card rounded-2xl p-4 w-full max-w-xs shadow-2xl animate-fade-in">
+          <div className="flex items-start gap-3">
+            <span className="icon-btn glass-input p-2 rounded-full shrink-0">
+              <Bell size={16} />
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white/90">Включить уведомления?</p>
+              <p className="text-xs text-white/50 mt-0.5">
+                Мы сообщим о новых сообщениях, даже если вкладка закрыта.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 mt-3">
+            <button
+              onClick={dismissPushPrompt}
+              className="px-3 py-1.5 rounded-full text-xs text-white/60 hover:text-white hover:bg-white/5 transition-all duration-300"
+            >
+              Не сейчас
+            </button>
+            <button
+              onClick={enablePush}
+              className="px-4 py-1.5 rounded-full text-xs font-medium bg-gradient-to-br from-violet-600 to-cyan-500 text-[#fff] shadow-glow-violet hover:brightness-110 transition-all duration-300"
+            >
+              Включить
+            </button>
           </div>
         </div>
       )}

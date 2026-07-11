@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -11,6 +11,7 @@ import {
   Forward,
   Loader2,
   Paperclip,
+  Palette,
   Pencil,
   Reply,
   Search,
@@ -30,6 +31,14 @@ import Lightbox from './Lightbox';
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|avif)$/i;
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const WALLPAPER_KEY = 'chatWallpaper';
+const WALLPAPER_PRESETS = [
+  { id: 'none', label: 'Без фона', swatch: 'transparent' },
+  { id: 'violet', label: 'Фиолетовый', swatch: 'linear-gradient(135deg, #8b5cf6, #6d28d9)' },
+  { id: 'ocean', label: 'Океан', swatch: 'linear-gradient(135deg, #22d3ee, #3b82f6)' },
+  { id: 'sunset', label: 'Закат', swatch: 'linear-gradient(135deg, #ec4899, #f59e0b)' },
+  { id: 'dots', label: 'Точки', swatch: 'radial-gradient(circle, #8b5cf6 1.4px, transparent 1.4px) 0 0 / 9px 9px' },
+];
 
 function groupReactions(reactions, currentUserId) {
   const order = [];
@@ -62,6 +71,20 @@ function formatLastSeen(dateStr) {
   return `был(а) в сети ${date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}`;
 }
 
+// In a group, name the people typing (Telegram-style); in a 1-1 chat the other person is
+// the only one who could be typing, so a name would be redundant.
+function typingLabel(typingUsers, conversation) {
+  if (typingUsers.size === 0) return null;
+  if (!conversation?.isGroup) return 'печатает...';
+  const names = conversation.participants
+    .filter((p) => typingUsers.has(p.id))
+    .map((p) => p.name || p.username);
+  if (names.length === 0) return 'печатает...';
+  if (names.length === 1) return `${names[0]} печатает...`;
+  if (names.length === 2) return `${names[0]} и ${names[1]} печатают...`;
+  return `${names.length} человек печатают...`;
+}
+
 function formatTime(dateStr) {
   const d = new Date(dateStr);
   return d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -71,7 +94,8 @@ function conversationTitle(conversation) {
   if (!conversation) return '';
   if (conversation.isGroup) return conversation.name || 'Группа';
   const other = conversation.participants[0];
-  return other?.name || `@${other?.username}` || 'Пользователь';
+  if (!other) return 'Пользователь';
+  return other.name || (other.username ? `@${other.username}` : 'Пользователь');
 }
 
 // A message counts as "read" once every other participant's last-read timestamp is at
@@ -82,6 +106,18 @@ function isReadByOthers(message, conversation) {
   return conversation.participants.every(
     (p) => p.lastReadAt && new Date(p.lastReadAt) >= new Date(message.createdAt)
   );
+}
+
+// Per-participant breakdown behind the group "read by" popover — same lastReadAt data
+// isReadByOthers already collapses into a single yes/no.
+function readReceipts(message, conversation) {
+  const read = [];
+  const unread = [];
+  (conversation?.participants || []).forEach((p) => {
+    if (p.lastReadAt && new Date(p.lastReadAt) >= new Date(message.createdAt)) read.push(p);
+    else unread.push(p);
+  });
+  return { read, unread };
 }
 
 export default function ChatWindow({ conversationId, currentUserId, onOpenSidebar }) {
@@ -107,6 +143,9 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   const [searching, setSearching] = useState(false);
   const [viewingHistory, setViewingHistory] = useState(false);
   const [reactionPickerFor, setReactionPickerFor] = useState(null);
+  const [readByFor, setReadByFor] = useState(null);
+  const [wallpaper, setWallpaper] = useState(() => localStorage.getItem(WALLPAPER_KEY) || 'none');
+  const [wallpaperMenuOpen, setWallpaperMenuOpen] = useState(false);
   const searchTimeoutRef = useRef(null);
   const fileInputRef = useRef(null);
   const scrollRef = useRef(null);
@@ -120,10 +159,22 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   // tempId -> { text, fileUrl, fileName, timeoutId }, for messages sent optimistically and
   // not yet confirmed by the server (via ack or the message:new broadcast, whichever wins).
   const pendingSendsRef = useRef(new Map());
+  // The self lastReadAt from the moment this chat was opened, captured once before markRead()
+  // races ahead and advances it — this is the boundary the "unread messages" divider renders
+  // above. boundaryCapturedRef guards against later conversation:updated refreshes (which
+  // would otherwise carry an already-advanced lastReadAt) overwriting it mid-session.
+  const unreadBoundaryRef = useRef(null);
+  const boundaryCapturedRef = useRef(false);
   const navigate = useNavigate();
 
   function loadConversation() {
-    api.getConversation(conversationId).then((data) => setConversation(data.conversation));
+    api.getConversation(conversationId).then((data) => {
+      setConversation(data.conversation);
+      if (!boundaryCapturedRef.current) {
+        boundaryCapturedRef.current = true;
+        unreadBoundaryRef.current = data.conversation.lastReadAt;
+      }
+    });
   }
 
   function markRead() {
@@ -146,6 +197,8 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     setViewingHistory(false);
     shouldStickToBottomRef.current = true;
     skipScrollAnimationRef.current = true;
+    boundaryCapturedRef.current = false;
+    unreadBoundaryRef.current = null;
 
     api.getMessages(conversationId).then((data) => {
       initialLoadIdsRef.current = new Set(data.messages.map((m) => m.id));
@@ -290,6 +343,30 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [reactionPickerFor]);
+
+  useEffect(() => {
+    if (!readByFor) return;
+    function handleClickOutside(e) {
+      if (!e.target.closest('[data-readby-picker]')) setReadByFor(null);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [readByFor]);
+
+  useEffect(() => {
+    if (!wallpaperMenuOpen) return;
+    function handleClickOutside(e) {
+      if (!e.target.closest('[data-wallpaper-picker]')) setWallpaperMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [wallpaperMenuOpen]);
+
+  function selectWallpaper(id) {
+    setWallpaper(id);
+    localStorage.setItem(WALLPAPER_KEY, id);
+    setWallpaperMenuOpen(false);
+  }
 
   async function loadOlderMessages() {
     if (loadingMore || !hasMore || messages.length === 0) return;
@@ -654,6 +731,35 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
         >
           <Search size={17} />
         </button>
+        <div className="relative shrink-0" data-wallpaper-picker>
+          <button
+            onClick={() => setWallpaperMenuOpen((v) => !v)}
+            className={`icon-btn p-2 rounded-full transition-all duration-300 ${wallpaperMenuOpen ? 'text-neon-cyan' : ''}`}
+            title="Фон чата"
+          >
+            <Palette size={17} />
+          </button>
+          {wallpaperMenuOpen && (
+            <div className="absolute right-0 top-11 glass-card rounded-xl shadow-xl p-2 z-30 animate-fade-in flex items-center gap-2">
+              {WALLPAPER_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  onClick={() => selectWallpaper(preset.id)}
+                  title={preset.label}
+                  className={`w-7 h-7 rounded-full ring-2 transition-all duration-200 ${
+                    wallpaper === preset.id ? 'ring-neon-cyan' : 'ring-white/15 hover:ring-white/30'
+                  }`}
+                  style={{
+                    background: preset.swatch,
+                    backgroundColor: preset.id === 'none' ? 'transparent' : undefined,
+                  }}
+                >
+                  {preset.id === 'none' && <X size={13} className="mx-auto text-white/50" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         {conversation?.isGroup && (
           <button
             onClick={() => setShowGroupInfo(true)}
@@ -719,7 +825,11 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           Вернуться к последним сообщениям
         </button>
       )}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 md:p-6 space-y-2.5">
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className={`flex-1 overflow-y-auto p-4 md:p-6 space-y-2.5 ${wallpaper !== 'none' ? `wallpaper-${wallpaper}` : ''}`}
+      >
         {loadingMore && <p className="text-center text-white/30 text-xs pb-2">Загрузка...</p>}
         {messages.map((m, i) => {
           const mine = m.senderId === currentUserId;
@@ -730,9 +840,23 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           const read = mine && !deleted && isReadByOthers(m, conversation);
           const isFresh = !initialLoadIdsRef.current.has(m.id);
           const pending = m.status === 'sending' || m.status === 'failed';
+          const showUnreadDivider =
+            !mine &&
+            unreadBoundaryRef.current &&
+            new Date(m.createdAt) > new Date(unreadBoundaryRef.current) &&
+            !(i > 0 && new Date(messages[i - 1].createdAt) > new Date(unreadBoundaryRef.current));
           return (
+            <Fragment key={m.clientId || m.id}>
+              {showUnreadDivider && (
+                <div className="flex items-center gap-3 py-1">
+                  <div className="flex-1 h-px bg-rose-400/30" />
+                  <span className="text-[11px] text-rose-300/80 uppercase tracking-wide shrink-0">
+                    Непрочитанные сообщения
+                  </span>
+                  <div className="flex-1 h-px bg-rose-400/30" />
+                </div>
+              )}
             <div
-              key={m.clientId || m.id}
               className={`group flex items-end gap-2 ${isFresh ? 'animate-message-in' : ''} ${mine ? 'justify-end' : 'justify-start'}`}
             >
               {mine && !deleted && !editing && !pending && (
@@ -916,8 +1040,54 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                     {m.editedAt && <span className="text-[11px] italic">изменено</span>}
                     <span className="text-[11px]">{formatTime(m.createdAt)}</span>
                     {mine && m.status === 'sending' && <Clock size={13} className="text-[#fff]/50" />}
+                    {mine && !m.status && conversation?.isGroup && (
+                      <div className="relative" data-readby-picker>
+                        <button
+                          type="button"
+                          onClick={() => setReadByFor(readByFor === m.id ? null : m.id)}
+                          className="flex items-center"
+                          title="Кто прочитал"
+                        >
+                          <CheckCheck size={14} className={read ? 'text-cyan-300' : 'text-[#fff]/50'} />
+                        </button>
+                        {readByFor === m.id &&
+                          (() => {
+                            const { read: readers, unread: notReaders } = readReceipts(m, conversation);
+                            return (
+                              <div className="absolute bottom-full right-0 mb-1 glass-card rounded-xl p-2.5 shadow-xl z-20 animate-fade-in min-w-48 max-h-56 overflow-y-auto text-left">
+                                <p className="text-[10px] uppercase tracking-wide text-white/30 mb-1 px-1">
+                                  Прочитали
+                                </p>
+                                {readers.length === 0 && (
+                                  <p className="text-xs text-white/40 px-1 pb-1">Пока никто</p>
+                                )}
+                                {readers.map((p) => (
+                                  <div key={p.id} className="flex items-center gap-2 py-1 px-1">
+                                    <Avatar name={p.name} src={p.avatarUrl} size="sm" />
+                                    <span className="text-xs text-white/80 truncate">{p.name}</span>
+                                  </div>
+                                ))}
+                                {notReaders.length > 0 && (
+                                  <>
+                                    <p className="text-[10px] uppercase tracking-wide text-white/30 mt-2 mb-1 px-1">
+                                      Ещё не видели
+                                    </p>
+                                    {notReaders.map((p) => (
+                                      <div key={p.id} className="flex items-center gap-2 py-1 px-1 opacity-60">
+                                        <Avatar name={p.name} src={p.avatarUrl} size="sm" />
+                                        <span className="text-xs text-white/60 truncate">{p.name}</span>
+                                      </div>
+                                    ))}
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })()}
+                      </div>
+                    )}
                     {mine &&
                       !m.status &&
+                      !conversation?.isGroup &&
                       (read ? (
                         <CheckCheck size={14} className="text-cyan-300" />
                       ) : (
@@ -967,13 +1137,14 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                 </div>
               )}
             </div>
+            </Fragment>
           );
         })}
         <div ref={bottomRef} />
       </div>
       <div className="px-5 h-5">
         {typingUsers.size > 0 && (
-          <p className="text-xs text-cyan-300/80 animate-fade-in">печатает...</p>
+          <p className="text-xs text-cyan-300/80 animate-fade-in">{typingLabel(typingUsers, conversation)}</p>
         )}
       </div>
       {replyingTo && (

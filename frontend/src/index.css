@@ -172,4 +172,29 @@ body {
       radial-gradient(ellipse 70% 50% at 100% 20%, rgba(34, 211, 238, 0.14), transparent 60%),
       radial-gradient(ellipse 60% 40% at 20% 100%, rgba(236, 72, 153, 0.1), transparent 60%);
   }
+
+  /* Optional per-device chat backgrounds, picked from ChatWindow's wallpaper menu and kept
+     in localStorage. Low alpha so message bubbles stay readable in both themes. */
+  .wallpaper-violet {
+    background-image:
+      radial-gradient(ellipse 70% 50% at 15% 10%, rgba(139, 92, 246, 0.16), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 85% 90%, rgba(109, 40, 217, 0.14), transparent 60%);
+  }
+
+  .wallpaper-ocean {
+    background-image:
+      radial-gradient(ellipse 70% 50% at 10% 90%, rgba(34, 211, 238, 0.16), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 90% 10%, rgba(59, 130, 246, 0.14), transparent 60%);
+  }
+
+  .wallpaper-sunset {
+    background-image:
+      radial-gradient(ellipse 70% 50% at 20% 10%, rgba(236, 72, 153, 0.16), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 80% 90%, rgba(245, 158, 11, 0.14), transparent 60%);
+  }
+
+  .wallpaper-dots {
+    background-image: radial-gradient(circle, rgba(139, 92, 246, 0.25) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
 }

@@ -24,7 +24,12 @@ function AppRoutes() {
   useEffect(() => {
     if (!user) return;
     connectSocket();
-    subscribeToPush().catch((err) => console.warn('Push subscription failed:', err.message));
+    // Only resubscribe silently when the user already made a choice (granted/denied) in a
+    // previous session — requesting permission itself is left to the in-app prompt in
+    // ChatPage, so the browser's native dialog never appears without context first.
+    if (typeof Notification !== 'undefined' && Notification.permission !== 'default') {
+      subscribeToPush().catch((err) => console.warn('Push subscription failed:', err.message));
+    }
     return () => disconnectSocket();
   }, [user]);
 

@@ -329,6 +329,21 @@ router.delete('/:id/participants/:userId', requireAuth, asyncHandler(async (req,
     .delete({ where: { userId_conversationId: { userId, conversationId: id } } })
     .catch(() => {});
 
+  // Hand ownership to the longest-standing remaining member instead of leaving the group
+  // permanently unmoderatable (existing.ownerId would otherwise still point at someone who
+  // is no longer a participant, and the isOwner check above never matches anyone again).
+  if (existing.ownerId === userId) {
+    const [nextOwner] = await prisma.conversationParticipant.findMany({
+      where: { conversationId: id },
+      orderBy: { joinedAt: 'asc' },
+      take: 1,
+    });
+    await prisma.conversation.update({
+      where: { id },
+      data: { ownerId: nextOwner?.userId || null },
+    });
+  }
+
   getIo()?.to(`conversation:${id}`).emit('conversation:updated', { conversationId: id });
   getIo()?.to(`conversation:${id}`).emit('conversation:removed', { conversationId: id, userId });
   leaveUserFromConversation(userId, id);
