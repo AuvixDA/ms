@@ -10,9 +10,6 @@ export default defineConfig({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.js',
-      injectManifest: {
-        injectionPoint: undefined,
-      },
       manifest: {
         name: 'Messenger',
         short_name: 'Messenger',
