@@ -111,7 +111,6 @@ git push -u origin main
   - `DATABASE_URL` — из шага 1 (строка от Neon)
   - `JWT_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` — значения возьмите из `backend/.env`
   - `FRONTEND_ORIGIN` — адрес фронтенда с шага 3 (сначала можно поставить заглушку и вернуться сюда после)
-  - `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` — из [cloudinary.com](https://cloudinary.com) (бесплатный тариф), со страницы Dashboard. Без них загруженные файлы (аватарки, фото, вложения) пишутся на диск Render и стираются при каждом передеплое — с этими переменными они хранятся в Cloudinary и переживают деплой.
 
 При каждом деплое Render сам генерирует Prisma Client и накатывает миграции (`prisma migrate deploy` уже встроен в `npm start`) — вручную ничего дополнительно выполнять не нужно. После деплоя Render выдаст домен вида `https://your-backend.onrender.com` — он нужен для шага 3.
 
