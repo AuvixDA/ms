@@ -89,6 +89,7 @@ export const api = {
     return request('/upload', { method: 'POST', body: formData, isFormData: true });
   },
   updateProfile: (data) => request('/users/me', { method: 'PATCH', body: data }),
+  getUserProfile: (userId) => request(`/users/${userId}`),
   blockUser: (userId) => request(`/users/${userId}/block`, { method: 'POST' }),
   unblockUser: (userId) => request(`/users/${userId}/block`, { method: 'DELETE' }),
   reportUser: (userId, reason) => request(`/users/${userId}/report`, { method: 'POST', body: { reason } }),

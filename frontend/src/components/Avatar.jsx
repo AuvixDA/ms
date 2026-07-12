@@ -1,12 +1,15 @@
 import { resolveFileUrl } from '../api/client';
 
+// Fixed per-user avatar palette (literal hex, so the accent token remap in
+// index.css doesn't collapse these into one colour). Telegram/VK-style hues.
 const GRADIENTS = [
-  'from-violet-500 to-indigo-500',
-  'from-cyan-500 to-blue-500',
-  'from-pink-500 to-rose-500',
-  'from-emerald-500 to-teal-500',
-  'from-amber-500 to-orange-500',
-  'from-fuchsia-500 to-purple-500',
+  'from-[#e17076] to-[#d5484f]', // red
+  'from-[#f2934a] to-[#e2792f]', // orange
+  'from-[#a67fe0] to-[#8b5cf0]', // purple
+  'from-[#5fbf73] to-[#3ea857]', // green
+  'from-[#5ec8d6] to-[#38b0c2]', // teal
+  'from-[#5aa7f0] to-[#3d86e8]', // blue
+  'from-[#ec7aae] to-[#e05593]', // pink
 ];
 
 function hashString(str) {

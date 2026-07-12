@@ -1,6 +1,6 @@
 const THEME_KEY = 'theme';
-const LIGHT_THEME_COLOR = '#f4f5f8';
-const DARK_THEME_COLOR = '#05060a';
+const LIGHT_THEME_COLOR = '#f0f2f5';
+const DARK_THEME_COLOR = '#0e1621';
 
 function applyThemeColorMeta(theme) {
   const meta = document.querySelector('meta[name="theme-color"]');

@@ -14,8 +14,8 @@ export default defineConfig({
         name: 'Messenger',
         short_name: 'Messenger',
         description: 'Свой мессенджер — устанавливаемое веб-приложение',
-        theme_color: '#05060a',
-        background_color: '#05060a',
+        theme_color: '#0e1621',
+        background_color: '#0e1621',
         display: 'standalone',
         start_url: '/',
         icons: [

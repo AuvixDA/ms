@@ -34,10 +34,49 @@ export default function ChatPage() {
   const [theme, setThemeState] = useState(getTheme);
   const [showPushPrompt, setShowPushPrompt] = useState(false);
   const [cropSrc, setCropSrc] = useState(null);
+  const [profileName, setProfileName] = useState('');
+  const [profileStatus, setProfileStatus] = useState('');
+  const [profileBio, setProfileBio] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileSaved, setProfileSaved] = useState(false);
+  const [profileError, setProfileError] = useState('');
   const avatarInputRef = useRef(null);
 
   function handleToggleTheme() {
     setThemeState(toggleTheme());
+  }
+
+  // Seed the editable fields from the current user each time the modal opens, so edits that
+  // were cancelled last time don't linger.
+  function openProfile() {
+    setProfileName(user.name || '');
+    setProfileStatus(user.status || '');
+    setProfileBio(user.bio || '');
+    setProfileError('');
+    setProfileSaved(false);
+    setProfileOpen(true);
+    setMenuOpen(false);
+  }
+
+  async function handleSaveProfile() {
+    if (!profileName.trim()) return;
+    setSavingProfile(true);
+    setProfileError('');
+    setProfileSaved(false);
+    try {
+      const { user: updated } = await api.updateProfile({
+        name: profileName.trim(),
+        status: profileStatus,
+        bio: profileBio,
+      });
+      updateUser(updated);
+      setProfileSaved(true);
+      setTimeout(() => setProfileSaved(false), 1800);
+    } catch (err) {
+      setProfileError(err.message);
+    } finally {
+      setSavingProfile(false);
+    }
   }
 
   const inviteLink = `${window.location.origin}/u/${user.username}`;
@@ -138,10 +177,7 @@ export default function ChatPage() {
           {menuOpen && (
             <div className="absolute right-0 top-11 glass-card rounded-xl shadow-xl py-1 min-w-40 animate-fade-in">
               <button
-                onClick={() => {
-                  setProfileOpen(true);
-                  setMenuOpen(false);
-                }}
+                onClick={openProfile}
                 className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
               >
                 <UserCircle2 size={16} />
@@ -229,6 +265,59 @@ export default function ChatPage() {
                 {avatarError}
               </p>
             )}
+            <div className="space-y-2.5 mb-5">
+              <div>
+                <label className="text-[11px] uppercase tracking-wide text-white/35 mb-1 block">Имя</label>
+                <input
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  maxLength={80}
+                  placeholder="Ваше имя"
+                  className="glass-input w-full px-3 py-2 rounded-xl text-sm text-white placeholder-white/35 outline-none focus:ring-2 focus:ring-neon-violet/50 transition-all duration-300"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] uppercase tracking-wide text-white/35 mb-1 block">Статус</label>
+                <input
+                  value={profileStatus}
+                  onChange={(e) => setProfileStatus(e.target.value)}
+                  maxLength={100}
+                  placeholder="Чем вы заняты?"
+                  className="glass-input w-full px-3 py-2 rounded-xl text-sm text-white placeholder-white/35 outline-none focus:ring-2 focus:ring-neon-violet/50 transition-all duration-300"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] uppercase tracking-wide text-white/35 mb-1 block">О себе</label>
+                <textarea
+                  value={profileBio}
+                  onChange={(e) => setProfileBio(e.target.value)}
+                  maxLength={280}
+                  rows={3}
+                  placeholder="Расскажите о себе"
+                  className="glass-input w-full px-3 py-2 rounded-xl text-sm text-white placeholder-white/35 outline-none focus:ring-2 focus:ring-neon-violet/50 transition-all duration-300 resize-none"
+                />
+              </div>
+              {profileError && (
+                <p className="text-rose-400 text-xs bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
+                  {profileError}
+                </p>
+              )}
+              <button
+                onClick={handleSaveProfile}
+                disabled={savingProfile || !profileName.trim()}
+                className="w-full flex items-center justify-center gap-2 bg-gradient-to-br from-violet-600 to-cyan-500 text-[#fff] py-2 rounded-xl text-sm font-medium shadow-glow-violet hover:brightness-110 disabled:opacity-50 disabled:shadow-none transition-all duration-300"
+              >
+                {profileSaved ? (
+                  <>
+                    <Check size={16} /> Сохранено
+                  </>
+                ) : savingProfile ? (
+                  'Сохранение…'
+                ) : (
+                  'Сохранить'
+                )}
+              </button>
+            </div>
             <p className="text-white/40 text-xs mb-2">
               Поделитесь ссылкой, чтобы с вами можно было начать чат
             </p>

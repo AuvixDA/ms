@@ -294,9 +294,9 @@ export default function ChatList({ currentUserId, open, onClose }) {
                   navigate(`/chat/${c.id}`);
                   onClose?.();
                 }}
-                className={`w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-xl transition-all duration-300 ${
+                className={`w-full flex items-center gap-3 text-left px-3 py-2.5 rounded-xl transition-colors duration-200 ${
                   active
-                    ? 'bg-gradient-to-r from-violet-500/20 to-cyan-500/10 ring-1 ring-white/10 shadow-glow-violet'
+                    ? 'bg-violet-500/15 ring-1 ring-violet-500/25'
                     : 'hover:bg-white/5'
                 }`}
               >

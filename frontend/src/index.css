@@ -1,18 +1,40 @@
 @import "tailwindcss";
 
 @theme {
-  --color-neon-violet: #8b5cf6;
-  --color-neon-blue: #3b82f6;
-  --color-neon-cyan: #22d3ee;
-  --color-neon-pink: #ec4899;
+  /* ── Accent ─────────────────────────────────────────────────────────────
+     One cohesive Telegram/VK blue instead of the old violet→cyan neon duo.
+     The components still use the stock `violet`/`cyan`/`indigo` utility names
+     in dozens of places (gradients, rings, accent text); overriding those
+     scale tokens here re-tints every one of them at once, so the restyle stays
+     in this file instead of touching 100+ classNames. Avatar keeps its own
+     multi-colour palette via literal hex, so it's unaffected (see Avatar.jsx). */
+  --color-neon-violet: #3390ec;
+  --color-neon-blue: #2b7de0;
+  --color-neon-cyan: #3390ec;
+  --color-neon-pink: #e8618c;
 
-  --color-surface-950: #05060a;
-  --color-surface-900: #0a0c14;
-  --color-surface-800: #10131d;
-  --color-surface-700: #171b28;
+  /* Accent ramp — collapsed onto the blue family */
+  --color-violet-600: #2f80e0;
+  --color-violet-500: #3390ec;
+  --color-violet-400: #62a8f2;
+  --color-indigo-600: #2b70d2;
+  --color-blue-600: #2b7de0;
+  --color-cyan-500: #3390ec;
+  --color-cyan-400: #4a9cf0;
+  --color-cyan-300: #5aa7f0;
+  --color-cyan-200: #8fc4f6;
 
-  --shadow-glow-violet: 0 0 18px 0 rgba(139, 92, 246, 0.45);
-  --shadow-glow-cyan: 0 0 18px 0 rgba(34, 211, 238, 0.45);
+  /* ── Surfaces (dark, Telegram-desktop neutral ramp) ─────────────────────── */
+  --color-surface-950: #0e1621; /* app background            */
+  --color-surface-900: #17212b; /* header / sidebar / composer */
+  --color-surface-800: #1c2733; /* cards / menus / hover     */
+  --color-surface-700: #242f3d; /* inputs / raised           */
+
+  /* Soft accent-tinted elevation instead of a neon glow */
+  --shadow-glow-violet: 0 4px 16px -4px rgba(51, 144, 236, 0.4);
+  --shadow-glow-cyan: 0 4px 16px -4px rgba(51, 144, 236, 0.32);
+
+  --radius-bubble: 14px;
 
   --animate-message-in: message-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   --animate-fade-in: fade-in 0.3s ease-out;
@@ -71,46 +93,67 @@ body {
   color-scheme: dark;
 }
 
-/* Everything below drives the light theme, toggled by adding .light to <html> (see
-   theme.js). Utilities like text-white/40 or bg-white/5 compile to
-   color-mix(in oklab, var(--color-white) 40%, transparent), so overriding --color-white
-   here retints every one of them app-wide without touching each component — the only
-   className changes needed anywhere are the handful of spots that render white text
-   directly on a solid, non-adaptive gradient (buttons, badges) and must stay white in
-   both themes; those use a literal text-[#fff] instead of text-white. */
+/* ── Component surface tokens (dark defaults) ──────────────────────────────
+   Flat, near-solid panels with hairline borders — the Telegram/VK-desktop look
+   — rather than heavy translucent glass. :root.light overrides these below. */
+:root {
+  --panel-bg: #17212b;
+  --panel-border: rgb(255 255 255 / 0.06);
+  --card-bg: #1c2733;
+  --card-border: rgb(255 255 255 / 0.08);
+  --input-bg: #242f3d;
+  --input-border: rgb(255 255 255 / 0.07);
+  --bubble-in-bg: #182533;
+  --bubble-in-border: rgb(255 255 255 / 0.04);
+  --icon-color: rgb(255 255 255 / 0.6);
+  --hover-bg: rgb(255 255 255 / 0.05);
+}
+
+/* Everything below drives the light theme, toggled by adding .light to <html>
+   (see theme.js). Utilities like text-white/40 or bg-white/5 compile to
+   color-mix(in oklab, var(--color-white) 40%, transparent), so overriding
+   --color-white here re-tints every one of them app-wide without touching each
+   component — the only className changes needed anywhere are the handful of
+   spots that render white text directly on a solid accent (buttons, badges) and
+   must stay white in both themes; those use a literal text-[#fff]. */
 :root.light {
   --color-white: #12131a;
-  --color-surface-950: #f4f5f8;
-  --color-surface-900: #ffffff;
-  --color-surface-800: #eceef2;
-  --color-surface-700: #dde1e8;
+  --color-surface-950: #f0f2f5; /* app background   */
+  --color-surface-900: #ffffff; /* panels           */
+  --color-surface-800: #f0f2f5; /* hover            */
+  --color-surface-700: #e7ebf0; /* raised           */
 
-  --glass-panel-bg: rgb(18 19 26 / 0.035);
-  --glass-panel-border: rgb(18 19 26 / 0.08);
-  --glass-card-bg: rgb(18 19 26 / 0.045);
-  --glass-card-border: rgb(18 19 26 / 0.1);
-  --glass-input-bg: rgb(18 19 26 / 0.035);
-  --glass-input-border: rgb(18 19 26 / 0.12);
-  --msg-bubble-bg: rgb(18 19 26 / 0.045);
-  --msg-bubble-border: rgb(18 19 26 / 0.1);
+  /* Deepen the accent link/text shades so they keep contrast on white */
+  --color-cyan-300: #2b7de0;
+  --color-cyan-200: #3390ec;
+
+  --panel-bg: #ffffff;
+  --panel-border: #e7ebf0;
+  --card-bg: #ffffff;
+  --card-border: #e7ebf0;
+  --input-bg: #f0f2f5;
+  --input-border: #e2e7ee;
+  --bubble-in-bg: #ffffff;
+  --bubble-in-border: #e7ebf0;
   --icon-color: rgb(18 19 26 / 0.55);
+  --hover-bg: rgb(18 19 26 / 0.045);
 }
 
 :root.light body {
   color-scheme: light;
 }
 
+/* Whisper-faint accent wash in light mode (kept far subtler than dark) */
 :root.light .neon-bg {
   background-image:
-    radial-gradient(ellipse 80% 50% at 15% 0%, rgba(139, 92, 246, 0.12), transparent 60%),
-    radial-gradient(ellipse 70% 50% at 100% 20%, rgba(34, 211, 238, 0.1), transparent 60%),
-    radial-gradient(ellipse 60% 40% at 20% 100%, rgba(236, 72, 153, 0.07), transparent 60%);
+    radial-gradient(ellipse 80% 50% at 15% 0%, rgba(51, 144, 236, 0.05), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 100% 20%, rgba(51, 144, 236, 0.035), transparent 60%);
 }
 
-/* Slim, unobtrusive scrollbars for the glass panels */
+/* Slim, unobtrusive scrollbars for the panels */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(139, 92, 246, 0.35) transparent;
+  scrollbar-color: rgb(140 155 170 / 0.4) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -123,48 +166,42 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: rgba(139, 92, 246, 0.35);
+  background-color: rgb(140 155 170 / 0.4);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(139, 92, 246, 0.55);
+  background-color: rgb(140 155 170 / 0.6);
 }
 
 @layer components {
   .glass-panel {
-    background-color: var(--glass-panel-bg, rgb(255 255 255 / 0.04));
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border: 1px solid var(--glass-panel-border, rgb(255 255 255 / 0.08));
+    background-color: var(--panel-bg);
+    border: 1px solid var(--panel-border);
   }
 
   .glass-card {
-    background-color: var(--glass-card-bg, rgb(255 255 255 / 0.06));
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-    border: 1px solid var(--glass-card-border, rgb(255 255 255 / 0.1));
+    background-color: var(--card-bg);
+    border: 1px solid var(--card-border);
   }
 
   .glass-input {
-    background-color: var(--glass-input-bg, rgb(255 255 255 / 0.05));
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid var(--glass-input-border, rgb(255 255 255 / 0.1));
+    background-color: var(--input-bg);
+    border: 1px solid var(--input-border);
   }
 
-  /* Same look as .glass-card without backdrop-filter. Message bubbles can number in the
-     dozens and re-paint on every scroll/animation frame — blur is by far the most
-     expensive part of that repaint, so bubbles use this instead to keep scrolling smooth. */
+  /* Incoming message bubble — same flat surface, no backdrop blur (bubbles can
+     number in the dozens and repaint every scroll frame; blur was the single
+     most expensive part of that). */
   .msg-bubble {
-    background-color: var(--msg-bubble-bg, rgb(255 255 255 / 0.06));
-    border: 1px solid var(--msg-bubble-border, rgb(255 255 255 / 0.1));
+    background-color: var(--bubble-in-bg);
+    border: 1px solid var(--bubble-in-border);
   }
 
-  /* Message bubbles use our own long-press/right-click menu instead of the browser's native
-     text-selection and "Copy/Look Up" callout — this suppresses both so they don't fight
-     each other. Copying text is available from that menu instead (see ChatWindow's mobile
-     action sheet). */
+  /* Message bubbles use our own long-press/right-click menu instead of the
+     browser's native text-selection + "Copy/Look Up" callout — this suppresses
+     both so they don't fight each other. Copying is offered from that menu
+     instead (see ChatWindow's mobile action sheet). */
   .no-native-selection {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
@@ -176,45 +213,44 @@ body {
     align-items: center;
     justify-content: center;
     color: var(--icon-color, rgb(255 255 255 / 0.6));
-    transition: color 0.3s, filter 0.3s, transform 0.3s;
+    transition: color 0.2s, background-color 0.2s;
   }
 
   .icon-btn:hover {
-    color: var(--color-neon-cyan);
-    filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.65));
-    transform: translateY(-1px);
+    color: var(--color-neon-violet);
   }
 
+  /* Near-flat app background with only a hint of accent, so panels read as the
+     content rather than the gradient competing with them. */
   .neon-bg {
     background-color: var(--color-surface-950);
     background-image:
-      radial-gradient(ellipse 80% 50% at 15% 0%, rgba(139, 92, 246, 0.18), transparent 60%),
-      radial-gradient(ellipse 70% 50% at 100% 20%, rgba(34, 211, 238, 0.14), transparent 60%),
-      radial-gradient(ellipse 60% 40% at 20% 100%, rgba(236, 72, 153, 0.1), transparent 60%);
+      radial-gradient(ellipse 80% 50% at 15% 0%, rgba(51, 144, 236, 0.07), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 100% 15%, rgba(51, 144, 236, 0.05), transparent 60%);
   }
 
-  /* Optional per-device chat backgrounds, picked from ChatWindow's wallpaper menu and kept
-     in localStorage. Low alpha so message bubbles stay readable in both themes. */
+  /* Optional per-device chat backgrounds, picked from ChatWindow's wallpaper
+     menu and kept in localStorage. Low alpha so bubbles stay readable. */
   .wallpaper-violet {
     background-image:
-      radial-gradient(ellipse 70% 50% at 15% 10%, rgba(139, 92, 246, 0.16), transparent 60%),
-      radial-gradient(ellipse 60% 40% at 85% 90%, rgba(109, 40, 217, 0.14), transparent 60%);
+      radial-gradient(ellipse 70% 50% at 15% 10%, rgba(51, 144, 236, 0.12), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 85% 90%, rgba(43, 112, 210, 0.1), transparent 60%);
   }
 
   .wallpaper-ocean {
     background-image:
-      radial-gradient(ellipse 70% 50% at 10% 90%, rgba(34, 211, 238, 0.16), transparent 60%),
-      radial-gradient(ellipse 70% 50% at 90% 10%, rgba(59, 130, 246, 0.14), transparent 60%);
+      radial-gradient(ellipse 70% 50% at 10% 90%, rgba(34, 170, 220, 0.12), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 90% 10%, rgba(51, 144, 236, 0.1), transparent 60%);
   }
 
   .wallpaper-sunset {
     background-image:
-      radial-gradient(ellipse 70% 50% at 20% 10%, rgba(236, 72, 153, 0.16), transparent 60%),
-      radial-gradient(ellipse 70% 50% at 80% 90%, rgba(245, 158, 11, 0.14), transparent 60%);
+      radial-gradient(ellipse 70% 50% at 20% 10%, rgba(236, 97, 140, 0.12), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 80% 90%, rgba(245, 158, 11, 0.1), transparent 60%);
   }
 
   .wallpaper-dots {
-    background-image: radial-gradient(circle, rgba(139, 92, 246, 0.25) 1px, transparent 1px);
+    background-image: radial-gradient(circle, rgba(120, 150, 180, 0.2) 1px, transparent 1px);
     background-size: 22px 22px;
   }
 }

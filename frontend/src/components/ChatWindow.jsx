@@ -37,6 +37,8 @@ import ForwardModal from './ForwardModal';
 import GroupInfoModal from './GroupInfoModal';
 import Lightbox from './Lightbox';
 import LinkPreview from './LinkPreview';
+import UserProfileModal from './UserProfileModal';
+import { formatLastSeen } from '../format';
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|avif)$/i;
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -108,21 +110,6 @@ function renderMessageText(text, mentionedIds, participants, currentUserId, curr
   return parts;
 }
 
-function formatLastSeen(dateStr) {
-  if (!dateStr) return null;
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMin = Math.floor((now - date) / 60000);
-  if (diffMin < 1) return 'был(а) в сети только что';
-  if (diffMin < 60) return `был(а) в сети ${diffMin} мин назад`;
-  const time = date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  if (date.toDateString() === now.toDateString()) return `был(а) в сети сегодня в ${time}`;
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return `был(а) в сети вчера в ${time}`;
-  return `был(а) в сети ${date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}`;
-}
-
 // In a group, name the people typing (Telegram-style); in a 1-1 chat the other person is
 // the only one who could be typing, so a name would be redundant.
 function typingLabel(typingUsers, conversation) {
@@ -184,6 +171,7 @@ export default function ChatWindow({ conversationId, currentUserId, currentUsern
   const [text, setText] = useState(draft || '');
   const [typingUsers, setTypingUsers] = useState(new Set());
   const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [profileUserId, setProfileUserId] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
@@ -1001,9 +989,23 @@ export default function ChatWindow({ conversationId, currentUserId, currentUsern
         ) : conversation?.isGroup ? (
           <Avatar name={conversationTitle(conversation)} src={conversation.avatarUrl} size="sm" />
         ) : (
-          <Avatar name={other?.name} src={other?.avatarUrl} size="sm" online={!!presence?.online} />
+          <button
+            type="button"
+            onClick={() => other?.id && setProfileUserId(other.id)}
+            className="shrink-0 rounded-full transition-transform duration-200 hover:brightness-110 active:scale-95"
+            title="Открыть профиль"
+          >
+            <Avatar name={other?.name} src={other?.avatarUrl} size="sm" online={!!presence?.online} />
+          </button>
         )}
-        <div className="min-w-0 flex-1">
+        <div
+          className={`min-w-0 flex-1 ${!conversation?.isGroup && !conversation?.isSelf ? 'cursor-pointer' : ''}`}
+          onClick={
+            !conversation?.isGroup && !conversation?.isSelf && other?.id
+              ? () => setProfileUserId(other.id)
+              : undefined
+          }
+        >
           <p className="font-medium text-white/90 truncate">{conversationTitle(conversation)}</p>
           {!conversation?.isGroup && !conversation?.isSelf && (
             <p className={`text-xs truncate ${presence?.online ? 'text-emerald-400' : 'text-white/40'}`}>
@@ -1310,11 +1312,11 @@ export default function ChatWindow({ conversationId, currentUserId, currentUsern
                 onTouchCancel={cancelBubbleLongPress}
                 onClickCapture={suppressPostLongPressClick}
                 onContextMenu={(e) => openBubbleContextMenu(e, m, deleted, pending, editing)}
-                className={`max-w-[75%] md:max-w-md px-4 py-2.5 shadow-lg transition-all duration-300 rounded-2xl no-native-selection ${
+                className={`max-w-[75%] md:max-w-md px-4 py-2.5 shadow-sm transition-all duration-300 rounded-2xl no-native-selection ${
                   deleted
                     ? 'msg-bubble text-white/35 italic'
                     : mine
-                    ? 'bg-gradient-to-br from-violet-600/90 to-indigo-600/90 text-[#fff] rounded-br-md shadow-glow-violet'
+                    ? 'bg-gradient-to-br from-violet-600 to-indigo-600 text-[#fff] rounded-br-md'
                     : 'msg-bubble text-white/90 rounded-bl-md'
                 } ${mentionsMe ? 'ring-2 ring-amber-400/60' : ''}`}
               >
@@ -1676,6 +1678,9 @@ export default function ChatWindow({ conversationId, currentUserId, currentUsern
             navigate('/', { replace: true });
           }}
         />
+      )}
+      {profileUserId && (
+        <UserProfileModal userId={profileUserId} onClose={() => setProfileUserId(null)} />
       )}
       {forwardingMessage && (
         <ForwardModal messages={forwardingMessage} onClose={() => setForwardingMessage(null)} />

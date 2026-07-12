@@ -7,6 +7,23 @@ const asyncHandler = require('../asyncHandler');
 const router = express.Router();
 
 const PUBLIC_USER_FIELDS = { id: true, username: true, name: true, avatarUrl: true };
+// Returned to the profile owner (own editable fields) after a PATCH /me.
+const SELF_FIELDS = { id: true, username: true, name: true, avatarUrl: true, bio: true, status: true };
+// Returned when viewing anyone's profile — adds "last seen" so the viewer can see
+// when they were online, mirroring the header of a 1-1 chat.
+const PROFILE_FIELDS = {
+  id: true,
+  username: true,
+  name: true,
+  avatarUrl: true,
+  bio: true,
+  status: true,
+  lastSeenAt: true,
+};
+
+const BIO_MAX = 280;
+const STATUS_MAX = 100;
+const NAME_MAX = 80;
 
 // Search users strictly by username (never by email/name), and only when a query is given.
 // This intentionally does not support browsing the full user directory.
@@ -41,18 +58,48 @@ router.get('/', requireAuth, asyncHandler(async (req, res) => {
   res.json({ users });
 }));
 
-// Update the current user's own profile (currently just the avatar).
+// Update the current user's own profile: avatar, display name, status and "about" (bio).
+// Every field is optional — only the keys present in the body are touched — so the same
+// endpoint serves the avatar-only flow and the profile editor.
 router.patch('/me', requireAuth, asyncHandler(async (req, res) => {
-  const { avatarUrl } = req.body;
+  const { avatarUrl, name, status, bio } = req.body;
+  const data = {};
 
-  if (avatarUrl !== undefined && avatarUrl !== null && typeof avatarUrl !== 'string') {
-    return res.status(400).json({ error: 'avatarUrl must be a string' });
+  if (avatarUrl !== undefined) {
+    if (avatarUrl !== null && typeof avatarUrl !== 'string') {
+      return res.status(400).json({ error: 'avatarUrl must be a string' });
+    }
+    data.avatarUrl = avatarUrl || null;
+  }
+
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'name must be a non-empty string' });
+    }
+    data.name = name.trim().slice(0, NAME_MAX);
+  }
+
+  // status/bio accept a string (trimmed, length-capped) or an empty string / null to clear.
+  if (status !== undefined) {
+    if (status !== null && typeof status !== 'string') {
+      return res.status(400).json({ error: 'status must be a string' });
+    }
+    const trimmed = (status || '').trim();
+    data.status = trimmed ? trimmed.slice(0, STATUS_MAX) : null;
+  }
+
+  if (bio !== undefined) {
+    if (bio !== null && typeof bio !== 'string') {
+      return res.status(400).json({ error: 'bio must be a string' });
+    }
+    const trimmed = (bio || '').trim();
+    data.bio = trimmed ? trimmed.slice(0, BIO_MAX) : null;
   }
 
   const user = await prisma.user.update({
     where: { id: req.userId },
-    data: { avatarUrl: avatarUrl || null },
-    select: PUBLIC_USER_FIELDS,
+    data,
+    select: SELF_FIELDS,
   });
 
   // Without this, everyone already sharing a conversation with this user only sees their
@@ -130,6 +177,22 @@ router.get('/by-username/:username', requireAuth, asyncHandler(async (req, res) 
   });
 
   if (!user || user.id === req.userId) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  res.json({ user });
+}));
+
+// Public profile of any user by id — powers the "view someone's profile" modal, so it
+// includes lastSeenAt. Defined last so the more specific /:id/block, /:id/report and
+// /by-username/:username routes above take precedence.
+router.get('/:id', requireAuth, asyncHandler(async (req, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.params.id },
+    select: PROFILE_FIELDS,
+  });
+
+  if (!user) {
     return res.status(404).json({ error: 'User not found' });
   }
 
