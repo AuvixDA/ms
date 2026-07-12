@@ -66,6 +66,8 @@ export const api = {
     request(`/conversations/${conversationId}/participants`, { method: 'POST', body: { userIds } }),
   removeParticipant: (conversationId, userId) =>
     request(`/conversations/${conversationId}/participants/${userId}`, { method: 'DELETE' }),
+  setParticipantRole: (conversationId, userId, role) =>
+    request(`/conversations/${conversationId}/participants/${userId}/role`, { method: 'PATCH', body: { role } }),
   getMessages: (conversationId, before) =>
     request(`/conversations/${conversationId}/messages${before ? `?before=${encodeURIComponent(before)}` : ''}`),
   getMessagesAround: (conversationId, messageId) =>
@@ -87,6 +89,10 @@ export const api = {
     return request('/upload', { method: 'POST', body: formData, isFormData: true });
   },
   updateProfile: (data) => request('/users/me', { method: 'PATCH', body: data }),
+  blockUser: (userId) => request(`/users/${userId}/block`, { method: 'POST' }),
+  unblockUser: (userId) => request(`/users/${userId}/block`, { method: 'DELETE' }),
+  reportUser: (userId, reason) => request(`/users/${userId}/report`, { method: 'POST', body: { reason } }),
+  getLinkPreview: (url) => request(`/link-preview?url=${encodeURIComponent(url)}`),
   getVapidPublicKey: () => request('/push/vapid-public-key'),
   subscribePush: (subscription) => request('/push/subscribe', { method: 'POST', body: subscription }),
 };

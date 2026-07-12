@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react';
-import { Camera, Crown, LogOut, Pencil, UserPlus, Users, X } from 'lucide-react';
+import { Camera, Crown, LogOut, Pencil, Shield, ShieldOff, UserPlus, Users, X } from 'lucide-react';
 import { api } from '../api/client';
 import Avatar from './Avatar';
 import UserSearchList from './UserSearchList';
+import CropModal from './CropModal';
 
 export default function GroupInfoModal({ conversation, currentUserId, onClose, onUpdated, onLeft }) {
   const [name, setName] = useState(conversation.name || '');
@@ -11,21 +12,35 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
   const [toAdd, setToAdd] = useState([]);
   const [busy, setBusy] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);
   const [error, setError] = useState('');
   const avatarInputRef = useRef(null);
   // Groups created before ownership existed have no ownerId — leave those unrestricted
   // rather than hiding moderation controls nobody can otherwise reach. Mirrors the
   // equivalent bypass in the backend's rename/remove-participant routes.
-  const canModerate = !conversation.ownerId || conversation.ownerId === currentUserId;
+  const isOwner = conversation.ownerId === currentUserId;
+  const canModerate = !conversation.ownerId || isOwner || conversation.selfRole === 'admin';
 
-  async function handleAvatarChange(e) {
+  function handleAvatarChange(e) {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
     setError('');
+    setCropSrc(URL.createObjectURL(file));
+  }
+
+  function handleCropCancel() {
+    setCropSrc((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }
+
+  async function handleCropped(blob) {
+    handleCropCancel();
     setAvatarBusy(true);
     try {
-      const { fileUrl } = await api.uploadFile(file);
+      const { fileUrl } = await api.uploadFile(new File([blob], 'avatar.jpg', { type: 'image/jpeg' }));
       const { conversation: updated } = await api.updateGroupAvatar(conversation.id, fileUrl);
       onUpdated(updated);
     } catch (err) {
@@ -63,6 +78,21 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
       onUpdated(updated);
       setToAdd([]);
       setAdding(false);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSetRole(userId, role) {
+    setBusy(true);
+    try {
+      await api.setParticipantRole(conversation.id, userId, role);
+      onUpdated({
+        ...conversation,
+        participants: conversation.participants.map((p) => (p.id === userId ? { ...p, role } : p)),
+      });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -173,9 +203,8 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
             <Avatar name="Вы" size="sm" />
             <span className="flex-1 text-left text-white/60 text-sm flex items-center gap-1.5">
               Вы
-              {conversation.ownerId === currentUserId && (
-                <Crown size={13} className="text-amber-400" />
-              )}
+              {isOwner && <Crown size={13} className="text-amber-400" />}
+              {!isOwner && conversation.selfRole === 'admin' && <Shield size={13} className="text-cyan-300" />}
             </span>
           </div>
           {conversation.participants.map((p) => (
@@ -185,10 +214,23 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
                 <span className="flex items-center gap-1.5 text-white/90 truncate">
                   {p.name}
                   {conversation.ownerId === p.id && <Crown size={13} className="text-amber-400 shrink-0" />}
+                  {conversation.ownerId !== p.id && p.role === 'admin' && (
+                    <Shield size={13} className="text-cyan-300 shrink-0" />
+                  )}
                 </span>
                 <span className="block text-white/40 text-xs truncate">@{p.username}</span>
               </span>
-              {canModerate && (
+              {isOwner && conversation.ownerId !== p.id && (
+                <button
+                  onClick={() => handleSetRole(p.id, p.role === 'admin' ? 'member' : 'admin')}
+                  disabled={busy}
+                  className="icon-btn p-1.5 rounded-full transition-all duration-300 shrink-0"
+                  title={p.role === 'admin' ? 'Снять админку' : 'Сделать админом'}
+                >
+                  {p.role === 'admin' ? <ShieldOff size={14} /> : <Shield size={14} />}
+                </button>
+              )}
+              {canModerate && conversation.ownerId !== p.id && (
                 <button
                   onClick={() => handleRemove(p.id)}
                   disabled={busy}
@@ -251,6 +293,7 @@ export default function GroupInfoModal({ conversation, currentUserId, onClose, o
           Покинуть группу
         </button>
       </div>
+      {cropSrc && <CropModal imageSrc={cropSrc} onCancel={handleCropCancel} onCropped={handleCropped} />}
     </div>
   );
 }

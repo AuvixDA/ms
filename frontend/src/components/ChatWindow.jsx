@@ -4,6 +4,7 @@ import {
   AlertCircle,
   ArrowDown,
   ArrowLeft,
+  Ban,
   Bookmark,
   Check,
   CheckCheck,
@@ -11,8 +12,10 @@ import {
   Clock,
   Copy,
   FileIcon,
+  Flag,
   Forward,
   Loader2,
+  MoreVertical,
   Paperclip,
   Palette,
   Pencil,
@@ -33,6 +36,7 @@ import Avatar from './Avatar';
 import ForwardModal from './ForwardModal';
 import GroupInfoModal from './GroupInfoModal';
 import Lightbox from './Lightbox';
+import LinkPreview from './LinkPreview';
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|avif)$/i;
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
@@ -59,6 +63,49 @@ function groupReactions(reactions, currentUserId) {
     const list = byEmoji.get(emoji);
     return { emoji, count: list.length, mine: list.some((r) => r.userId === currentUserId) };
   });
+}
+
+const URL_PATTERN = /https?:\/\/[^\s<]+[^\s<.,:;"')\]]/;
+
+// Only the first link gets a preview card, same as most messengers — a message with
+// several URLs would otherwise turn into a wall of preview cards.
+function extractFirstUrl(text) {
+  if (!text) return null;
+  const match = text.match(URL_PATTERN);
+  return match ? match[0] : null;
+}
+
+// Mentions are stored as userIds (see backend/src/socket/index.js), not text — so
+// highlighting them means matching "@username" substrings back against each mentioned
+// user's *current* username, resolved fresh from the conversation's own participant list
+// every render. A username that changed after the message was sent just won't highlight
+// anymore, but the underlying mention (used for notifications) is unaffected either way.
+function renderMessageText(text, mentionedIds, participants, currentUserId, currentUsername) {
+  if (!mentionedIds || mentionedIds.length === 0) return text;
+  const usernameById = new Map(participants.map((p) => [p.id, p.username]));
+  if (currentUsername) usernameById.set(currentUserId, currentUsername);
+  const mentionedUsernames = new Set(
+    mentionedIds.map((uid) => usernameById.get(uid)).filter(Boolean).map((u) => u.toLowerCase())
+  );
+  if (mentionedUsernames.size === 0) return text;
+
+  const pattern = /@([a-zA-Z0-9_]{3,20})/g;
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+  while ((match = pattern.exec(text))) {
+    if (!mentionedUsernames.has(match[1].toLowerCase())) continue;
+    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
+    parts.push(
+      <span key={match.index} className="font-semibold text-cyan-300">
+        {match[0]}
+      </span>
+    );
+    lastIndex = match.index + match[0].length;
+  }
+  if (parts.length === 0) return text;
+  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+  return parts;
 }
 
 function formatLastSeen(dateStr) {
@@ -126,7 +173,7 @@ function readReceipts(message, conversation) {
   return { read, unread };
 }
 
-export default function ChatWindow({ conversationId, currentUserId, onOpenSidebar, draft, onDraftChange }) {
+export default function ChatWindow({ conversationId, currentUserId, currentUsername, onOpenSidebar, draft, onDraftChange }) {
   const [conversation, setConversation] = useState(null);
   const [messages, setMessages] = useState([]);
   const [hasMore, setHasMore] = useState(false);
@@ -140,6 +187,8 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   const [editingId, setEditingId] = useState(null);
   const [editText, setEditText] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
+  const [mentionQuery, setMentionQuery] = useState(null);
+  const [mentionRange, setMentionRange] = useState(null);
   const [forwardingMessage, setForwardingMessage] = useState(null);
   const [lightboxImage, setLightboxImage] = useState(null);
   const [pendingAttachment, setPendingAttachment] = useState(null);
@@ -158,6 +207,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [wallpaper, setWallpaper] = useState(() => localStorage.getItem(WALLPAPER_KEY) || 'none');
   const [wallpaperMenuOpen, setWallpaperMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const searchTimeoutRef = useRef(null);
   const fileInputRef = useRef(null);
   const scrollRef = useRef(null);
@@ -383,6 +433,15 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [wallpaperMenuOpen]);
 
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    function handleClickOutside(e) {
+      if (!e.target.closest('[data-user-menu]')) setUserMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [userMenuOpen]);
+
   function selectWallpaper(id) {
     setWallpaper(id);
     localStorage.setItem(WALLPAPER_KEY, id);
@@ -438,15 +497,71 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
   }, [text]);
 
   function handleTextChange(e) {
-    setText(e.target.value);
+    const value = e.target.value;
+    setText(value);
     emitTyping(true);
     clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => emitTyping(false), 1500);
+    updateMentionQuery(value, e.target.selectionStart);
+  }
+
+  // @mentions only make sense with a fixed set of people to mention, so this only ever
+  // triggers in groups — a 1-1 chat has nobody else to autocomplete against.
+  function updateMentionQuery(value, cursor) {
+    if (!conversation?.isGroup) {
+      setMentionQuery(null);
+      return;
+    }
+    const uptoCursor = value.slice(0, cursor);
+    const atIndex = uptoCursor.lastIndexOf('@');
+    if (atIndex === -1) {
+      setMentionQuery(null);
+      return;
+    }
+    const fragment = uptoCursor.slice(atIndex + 1);
+    const boundaryOk = atIndex === 0 || /\s/.test(uptoCursor[atIndex - 1]);
+    if (!boundaryOk || !/^[a-zA-Z0-9_]{0,20}$/.test(fragment)) {
+      setMentionQuery(null);
+      return;
+    }
+    setMentionQuery(fragment);
+    setMentionRange({ start: atIndex, end: cursor });
+  }
+
+  const mentionCandidates =
+    mentionQuery !== null
+      ? (conversation?.participants || [])
+          .filter((p) => p.username?.toLowerCase().startsWith(mentionQuery.toLowerCase()))
+          .slice(0, 5)
+      : [];
+
+  function selectMention(participant) {
+    const insertion = `@${participant.username} `;
+    const newText = text.slice(0, mentionRange.start) + insertion + text.slice(mentionRange.end);
+    setText(newText);
+    setMentionQuery(null);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const pos = mentionRange.start + insertion.length;
+      el.focus();
+      el.setSelectionRange(pos, pos);
+    });
   }
 
   // Enter sends the message; Shift+Enter (or Ctrl/Cmd+Enter) inserts a newline like most
   // chat apps, so people can write multi-paragraph messages without them being cut off.
+  // While the mention dropdown is open, Enter/Escape control it instead of sending.
   function handleKeyDown(e) {
+    if (mentionQuery !== null && mentionCandidates.length > 0 && e.key === 'Enter') {
+      e.preventDefault();
+      selectMention(mentionCandidates[0]);
+      return;
+    }
+    if (e.key === 'Escape' && mentionQuery !== null) {
+      setMentionQuery(null);
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       handleSend();
@@ -644,6 +759,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
     if (overrideText === undefined) {
       setText('');
       setReplyingTo(null);
+      setMentionQuery(null);
     }
     emitTyping(false);
   }
@@ -719,6 +835,29 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
       ? await api.unpinMessage(conversationId)
       : await api.pinMessage(conversationId, message.id);
     setConversation((prev) => (prev ? { ...prev, pinnedMessage } : prev));
+  }
+
+  async function handleToggleBlock() {
+    setUserMenuOpen(false);
+    if (!other) return;
+    if (conversation?.blockedByMe) {
+      await api.unblockUser(other.id);
+    } else {
+      if (!window.confirm(`Заблокировать ${other.name || 'пользователя'}? Вы больше не сможете писать друг другу.`)) {
+        return;
+      }
+      await api.blockUser(other.id);
+    }
+    loadConversation();
+  }
+
+  async function handleReport() {
+    setUserMenuOpen(false);
+    if (!other) return;
+    const reason = window.prompt(`Пожаловаться на ${other.name || 'пользователя'}. Причина (необязательно):`);
+    if (reason === null) return;
+    await api.reportUser(other.id, reason);
+    window.alert('Жалоба отправлена.');
   }
 
   // Touch devices have no hover, so the desktop reply/forward/react bar is unreachable there —
@@ -919,6 +1058,35 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
             <Settings size={17} />
           </button>
         )}
+        {!conversation?.isGroup && !conversation?.isSelf && (
+          <div className="relative shrink-0" data-user-menu>
+            <button
+              onClick={() => setUserMenuOpen((v) => !v)}
+              className={`icon-btn p-2 rounded-full transition-all duration-300 ${userMenuOpen ? 'text-neon-cyan' : ''}`}
+              title="Действия"
+            >
+              <MoreVertical size={17} />
+            </button>
+            {userMenuOpen && (
+              <div className="absolute right-0 top-11 glass-card rounded-xl shadow-xl py-1 min-w-52 z-30 animate-fade-in">
+                <button
+                  onClick={handleToggleBlock}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-white/80 hover:text-white hover:bg-white/5 transition-all duration-300"
+                >
+                  <Ban size={15} />
+                  {conversation?.blockedByMe ? 'Разблокировать' : 'Заблокировать'}
+                </button>
+                <button
+                  onClick={handleReport}
+                  className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 transition-all duration-300"
+                >
+                  <Flag size={15} />
+                  Пожаловаться
+                </button>
+              </div>
+            )}
+          </div>
+        )}
           </>
         )}
       </div>
@@ -1030,6 +1198,8 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           const isFresh = !initialLoadIdsRef.current.has(m.id);
           const pending = m.status === 'sending' || m.status === 'failed';
           const pinned = conversation?.pinnedMessage?.id === m.id;
+          const mentionsMe = !mine && conversation?.isGroup && m.mentions?.includes(currentUserId);
+          const firstUrl = !deleted ? extractFirstUrl(m.text) : null;
           const showUnreadDivider =
             !mine &&
             unreadBoundaryRef.current &&
@@ -1146,7 +1316,7 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                     : mine
                     ? 'bg-gradient-to-br from-violet-600/90 to-indigo-600/90 text-[#fff] rounded-br-md shadow-glow-violet'
                     : 'msg-bubble text-white/90 rounded-bl-md'
-                }`}
+                } ${mentionsMe ? 'ring-2 ring-amber-400/60' : ''}`}
               >
                 {!mine && !deleted && showAvatar && (
                   <p className="text-xs font-medium mb-1 text-cyan-300/90">{m.sender?.name}</p>
@@ -1198,8 +1368,19 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
                 ) : (
                   <>
                     {!deleted && m.text && (
-                      <p className="whitespace-pre-wrap break-words leading-relaxed">{m.text}</p>
+                      <p className="whitespace-pre-wrap break-words leading-relaxed">
+                        {conversation?.isGroup
+                          ? renderMessageText(
+                              m.text,
+                              m.mentions,
+                              conversation.participants,
+                              currentUserId,
+                              currentUsername
+                            )
+                          : m.text}
+                      </p>
                     )}
+                    {firstUrl && <LinkPreview url={firstUrl} />}
                     {!deleted && m.fileUrl && isImage && (
                       <button
                         type="button"
@@ -1376,6 +1557,22 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           <p className="text-xs text-cyan-300/80 animate-fade-in">{typingLabel(typingUsers, conversation)}</p>
         )}
       </div>
+      {mentionQuery !== null && mentionCandidates.length > 0 && (
+        <div className="glass-panel border-x-0 border-b-0 px-2 py-1.5 shrink-0 animate-fade-in flex flex-col gap-0.5 max-h-40 overflow-y-auto">
+          {mentionCandidates.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => selectMention(p)}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/5 text-left"
+            >
+              <Avatar name={p.name} src={p.avatarUrl} size="sm" />
+              <span className="text-sm text-white/90 truncate">{p.name}</span>
+              <span className="text-xs text-white/40 truncate">@{p.username}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {replyingTo && (
         <div className="glass-panel border-x-0 border-b-0 px-4 py-2 flex items-center gap-2 shrink-0 animate-fade-in">
           <Reply size={15} className="text-cyan-300 shrink-0" />
@@ -1423,35 +1620,51 @@ export default function ChatWindow({ conversationId, currentUserId, onOpenSideba
           </button>
         </div>
       )}
-      <form onSubmit={handleSubmit} className="glass-panel border-x-0 border-b-0 p-3 flex items-center gap-2 shrink-0">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          className="icon-btn p-2.5 rounded-full transition-all duration-300"
-          title="Прикрепить файл"
-        >
-          <Paperclip size={19} />
-        </button>
-        <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={handleTextChange}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder="Сообщение..."
-          rows={1}
-          className="glass-input flex-1 px-4 py-2.5 rounded-3xl text-sm text-white placeholder-white/35 outline-none focus:ring-2 focus:ring-neon-violet/50 transition-all duration-300 resize-none leading-relaxed max-h-[150px] overflow-y-auto"
-        />
-        <button
-          type="submit"
-          disabled={uploading || (!text.trim() && !pendingAttachment)}
-          className="p-2.5 rounded-full bg-gradient-to-br from-violet-600 to-cyan-500 text-[#fff] shadow-glow-violet disabled:opacity-40 disabled:shadow-none hover:brightness-110 transition-all duration-300"
-          title="Отправить"
-        >
-          {uploading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-        </button>
-      </form>
+      {conversation?.blockedByMe || conversation?.blockedMe ? (
+        <div className="glass-panel border-x-0 border-b-0 p-4 flex items-center justify-center gap-2 shrink-0 text-sm text-white/50">
+          <Ban size={16} />
+          {conversation.blockedByMe ? (
+            <span>
+              Вы заблокировали этого пользователя.{' '}
+              <button onClick={handleToggleBlock} className="text-cyan-300 hover:text-cyan-200 underline">
+                Разблокировать
+              </button>
+            </span>
+          ) : (
+            <span>Переписка недоступна.</span>
+          )}
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="glass-panel border-x-0 border-b-0 p-3 flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="icon-btn p-2.5 rounded-full transition-all duration-300"
+            title="Прикрепить файл"
+          >
+            <Paperclip size={19} />
+          </button>
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={handleTextChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder="Сообщение..."
+            rows={1}
+            className="glass-input flex-1 px-4 py-2.5 rounded-3xl text-sm text-white placeholder-white/35 outline-none focus:ring-2 focus:ring-neon-violet/50 transition-all duration-300 resize-none leading-relaxed max-h-[150px] overflow-y-auto"
+          />
+          <button
+            type="submit"
+            disabled={uploading || (!text.trim() && !pendingAttachment)}
+            className="p-2.5 rounded-full bg-gradient-to-br from-violet-600 to-cyan-500 text-[#fff] shadow-glow-violet disabled:opacity-40 disabled:shadow-none hover:brightness-110 transition-all duration-300"
+            title="Отправить"
+          >
+            {uploading ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+          </button>
+        </form>
+      )}
       {showGroupInfo && conversation && (
         <GroupInfoModal
           conversation={conversation}

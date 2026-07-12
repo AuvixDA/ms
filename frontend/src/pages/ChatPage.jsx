@@ -11,6 +11,7 @@ const MESSAGE_DRAFTS_KEY = 'messageDrafts';
 import ChatList from '../components/ChatList';
 import ChatWindow from '../components/ChatWindow';
 import Avatar from '../components/Avatar';
+import CropModal from '../components/CropModal';
 
 function loadDrafts() {
   try {
@@ -32,6 +33,7 @@ export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [theme, setThemeState] = useState(getTheme);
   const [showPushPrompt, setShowPushPrompt] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);
   const avatarInputRef = useRef(null);
 
   function handleToggleTheme() {
@@ -64,14 +66,26 @@ export default function ChatPage() {
     subscribeToPush().catch((err) => console.warn('Push subscription failed:', err.message));
   }
 
-  async function handleAvatarChange(e) {
+  function handleAvatarChange(e) {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
     setAvatarError('');
+    setCropSrc(URL.createObjectURL(file));
+  }
+
+  function handleCropCancel() {
+    setCropSrc((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  }
+
+  async function handleCropped(blob) {
+    handleCropCancel();
     setAvatarBusy(true);
     try {
-      const { fileUrl } = await api.uploadFile(file);
+      const { fileUrl } = await api.uploadFile(new File([blob], 'avatar.jpg', { type: 'image/jpeg' }));
       const { user: updated } = await api.updateProfile({ avatarUrl: fileUrl });
       updateUser(updated);
     } catch (err) {
@@ -158,6 +172,7 @@ export default function ChatPage() {
             key={conversationId}
             conversationId={conversationId}
             currentUserId={user.id}
+            currentUsername={user.username}
             onOpenSidebar={() => setSidebarOpen(true)}
             draft={drafts[conversationId] || ''}
             onDraftChange={(value) => updateDraft(conversationId, value)}
@@ -263,6 +278,7 @@ export default function ChatPage() {
           </div>
         </div>
       )}
+      {cropSrc && <CropModal imageSrc={cropSrc} onCancel={handleCropCancel} onCropped={handleCropped} />}
     </div>
   );
 }

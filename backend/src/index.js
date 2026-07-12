@@ -9,6 +9,7 @@ const userRoutes = require('./routes/users');
 const conversationRoutes = require('./routes/conversations');
 const uploadRoutes = require('./routes/upload');
 const pushRoutes = require('./routes/push');
+const linkPreviewRoutes = require('./routes/linkPreview');
 const { initSocket } = require('./socket');
 const { configure: configurePush } = require('./push');
 
@@ -26,6 +27,7 @@ app.use('/users', userRoutes);
 app.use('/conversations', conversationRoutes);
 app.use('/upload', uploadRoutes);
 app.use('/push', pushRoutes);
+app.use('/link-preview', linkPreviewRoutes);
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 

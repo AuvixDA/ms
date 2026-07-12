@@ -30,6 +30,10 @@ function serializeMessage(m) {
     reactions: deleted
       ? []
       : (m.reactions || []).map((r) => ({ emoji: r.emoji, userId: r.userId, userName: r.user?.name || null })),
+    // Just the mentioned userIds — the frontend resolves each to a display name from the
+    // conversation's own (already up to date) participant list, so a rename doesn't require
+    // touching old messages.
+    mentions: deleted ? [] : (m.mentions || []).map((mn) => mn.userId),
     createdAt: m.createdAt,
     editedAt: m.editedAt,
     deletedAt: m.deletedAt,
@@ -46,4 +50,14 @@ const REACTIONS_INCLUDE = {
   reactions: { include: { user: { select: { id: true, name: true } } } },
 };
 
-module.exports = { serializeMessage, MESSAGE_SENDER_INCLUDE, REPLY_PREVIEW_INCLUDE, REACTIONS_INCLUDE };
+const MENTIONS_INCLUDE = {
+  mentions: true,
+};
+
+module.exports = {
+  serializeMessage,
+  MESSAGE_SENDER_INCLUDE,
+  REPLY_PREVIEW_INCLUDE,
+  REACTIONS_INCLUDE,
+  MENTIONS_INCLUDE,
+};

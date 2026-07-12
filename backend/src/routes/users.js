@@ -18,12 +18,20 @@ router.get('/', requireAuth, asyncHandler(async (req, res) => {
     return res.json({ users: [] });
   }
 
+  // Hide anyone on either side of a block from search — no point surfacing someone you
+  // can't actually start a conversation with (see the block check in message:send).
+  const blocks = await prisma.block.findMany({
+    where: { OR: [{ blockerId: req.userId }, { blockedId: req.userId }] },
+    select: { blockerId: true, blockedId: true },
+  });
+  const excludedIds = [req.userId, ...blocks.flatMap((b) => [b.blockerId, b.blockedId])];
+
   // Usernames are always stored lowercase (enforced at registration), so a plain
   // startsWith on the lowercased query is already case-insensitive without needing
   // Prisma's `mode: 'insensitive'` (which isn't supported on every datasource).
   const users = await prisma.user.findMany({
     where: {
-      id: { not: req.userId },
+      id: { notIn: excludedIds },
       username: { startsWith: query.toLowerCase() },
     },
     select: PUBLIC_USER_FIELDS,
@@ -60,6 +68,56 @@ router.patch('/me', requireAuth, asyncHandler(async (req, res) => {
   });
 
   res.json({ user });
+}));
+
+// Block another user: neither of you can message the other in your 1-1 chat any more (see
+// the block check in socket message:send), and they stop showing up in your search results.
+router.post('/:id/block', requireAuth, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  if (id === req.userId) {
+    return res.status(400).json({ error: "Can't block yourself" });
+  }
+  const target = await prisma.user.findUnique({ where: { id }, select: { id: true } });
+  if (!target) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  await prisma.block.upsert({
+    where: { blockerId_blockedId: { blockerId: req.userId, blockedId: id } },
+    create: { blockerId: req.userId, blockedId: id },
+    update: {},
+  });
+
+  res.json({ ok: true });
+}));
+
+router.delete('/:id/block', requireAuth, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  await prisma.block.deleteMany({ where: { blockerId: req.userId, blockedId: id } });
+  res.json({ ok: true });
+}));
+
+// Files a report against a user for later manual review — no automated action is taken.
+router.post('/:id/report', requireAuth, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+  if (id === req.userId) {
+    return res.status(400).json({ error: "Can't report yourself" });
+  }
+  const target = await prisma.user.findUnique({ where: { id }, select: { id: true } });
+  if (!target) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  await prisma.report.create({
+    data: {
+      reporterId: req.userId,
+      reportedId: id,
+      reason: typeof reason === 'string' && reason.trim() ? reason.trim().slice(0, 500) : null,
+    },
+  });
+
+  res.json({ ok: true });
 }));
 
 // Exact lookup used to resolve a shared profile link (/u/:username).

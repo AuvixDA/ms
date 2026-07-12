@@ -39,6 +39,7 @@ export default defineConfig({
       '/upload': 'http://localhost:4000',
       '/push': 'http://localhost:4000',
       '/uploads': 'http://localhost:4000',
+      '/link-preview': 'http://localhost:4000',
       '/socket.io': { target: 'http://localhost:4000', ws: true },
     },
   },

@@ -2,7 +2,9 @@ const { Server } = require('socket.io');
 const prisma = require('../prisma');
 const { verifySocketToken } = require('../middleware/auth');
 const { notifyUser } = require('../push');
-const { serializeMessage, MESSAGE_SENDER_INCLUDE, REPLY_PREVIEW_INCLUDE } = require('../messageSerializer');
+const { serializeMessage, MESSAGE_SENDER_INCLUDE, REPLY_PREVIEW_INCLUDE, MENTIONS_INCLUDE } = require('../messageSerializer');
+
+const USERNAME_MENTION_PATTERN = /@([a-z0-9_]{3,20})/gi;
 
 // userId -> Set of connected socket ids (a user can have multiple tabs/devices)
 const onlineUsers = new Map();
@@ -131,6 +133,52 @@ function initSocket(httpServer, frontendOrigin) {
         const forwardedFrom =
           typeof forwardedFromName === 'string' && forwardedFromName.trim() ? forwardedFromName.trim().slice(0, 100) : null;
 
+        const conversation = await prisma.conversation.findUnique({
+          where: { id: conversationId },
+          select: { isGroup: true, isSelf: true },
+        });
+
+        // A blocked 1-1 chat goes silent in both directions — neither side needs to know
+        // who blocked whom, the send just quietly fails on both ends.
+        if (conversation && !conversation.isGroup && !conversation.isSelf) {
+          const other = await prisma.conversationParticipant.findFirst({
+            where: { conversationId, userId: { not: userId } },
+            select: { userId: true },
+          });
+          if (other) {
+            const blocked = await prisma.block.findFirst({
+              where: {
+                OR: [
+                  { blockerId: userId, blockedId: other.userId },
+                  { blockerId: other.userId, blockedId: userId },
+                ],
+              },
+            });
+            if (blocked) {
+              if (ack) ack({ error: 'blocked' });
+              return;
+            }
+          }
+        }
+
+        // @mentions only make sense in groups, and are resolved against this group's actual
+        // members (not a global user search) — referenced by userId so a later username
+        // change can't silently break or misdirect an old mention.
+        let mentionedUserIds = [];
+        if (text && text.includes('@') && conversation?.isGroup) {
+          const members = await prisma.conversationParticipant.findMany({
+            where: { conversationId },
+            include: { user: { select: { id: true, username: true } } },
+          });
+          const idByUsername = new Map(members.map((m) => [m.user.username.toLowerCase(), m.user.id]));
+          const uniqueIds = new Set();
+          for (const match of text.matchAll(USERNAME_MENTION_PATTERN)) {
+            const id = idByUsername.get(match[1].toLowerCase());
+            if (id && id !== userId) uniqueIds.add(id);
+          }
+          mentionedUserIds = [...uniqueIds];
+        }
+
         const message = await prisma.message.create({
           data: {
             conversationId,
@@ -140,8 +188,10 @@ function initSocket(httpServer, frontendOrigin) {
             fileName: fileName || null,
             replyToId: validReplyToId,
             forwardedFromName: forwardedFrom,
+            mentions:
+              mentionedUserIds.length > 0 ? { create: mentionedUserIds.map((uid) => ({ userId: uid })) } : undefined,
           },
-          include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE },
+          include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...MENTIONS_INCLUDE },
         });
 
         const serialized = serializeMessage(message);
@@ -169,7 +219,10 @@ function initSocket(httpServer, frontendOrigin) {
         });
         participants.forEach((p) => {
           const muted = !!p.muteUntil && new Date(p.muteUntil) > new Date();
-          if (!muted && !isViewingConversation(p.userId, conversationId)) {
+          // Being @mentioned notifies even through a mute — same reasoning as most chat
+          // apps: muting a busy group shouldn't also hide someone asking for you directly.
+          const mentioned = mentionedUserIds.includes(p.userId);
+          if ((!muted || mentioned) && !isViewingConversation(p.userId, conversationId)) {
             notifyUser(p.userId, {
               title: message.sender.name,
               body: message.text || 'Отправил файл',

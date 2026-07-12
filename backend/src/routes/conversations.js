@@ -3,7 +3,13 @@ const prisma = require('../prisma');
 const { requireAuth } = require('../middleware/auth');
 const { getIo, joinUserToConversation, leaveUserFromConversation } = require('../socket');
 const asyncHandler = require('../asyncHandler');
-const { serializeMessage, MESSAGE_SENDER_INCLUDE, REPLY_PREVIEW_INCLUDE, REACTIONS_INCLUDE } = require('../messageSerializer');
+const {
+  serializeMessage,
+  MESSAGE_SENDER_INCLUDE,
+  REPLY_PREVIEW_INCLUDE,
+  REACTIONS_INCLUDE,
+  MENTIONS_INCLUDE,
+} = require('../messageSerializer');
 
 const router = express.Router();
 
@@ -17,6 +23,16 @@ const MUTE_DURATIONS_MS = { '1h': 60 * 60 * 1000, '8h': 8 * 60 * 60 * 1000 };
 
 function isMuted(participant) {
   return !!participant?.muteUntil && new Date(participant.muteUntil) > new Date();
+}
+
+// True for the group's single permanent owner (Conversation.ownerId) or anyone appointed
+// admin (ConversationParticipant.role). Groups created before ownership existed have no
+// ownerId at all — left unrestricted rather than locking everyone out of moderating them,
+// same bypass the rename/remove-participant routes already relied on before roles existed.
+function isModerator(conversation, participant) {
+  if (!conversation.ownerId) return true;
+  if (conversation.ownerId === participant?.userId) return true;
+  return participant?.role === 'admin';
 }
 
 // A lightweight preview of the currently pinned message, in the same shape as a reply
@@ -52,12 +68,16 @@ function serializeConversation(c, currentUserId) {
         username: p.user.username,
         avatarUrl: p.user.avatarUrl,
         lastReadAt: p.lastReadAt,
+        role: p.role,
       })),
     lastMessage,
     unreadCount,
     archived: !!self?.archivedAt,
     muted: isMuted(self),
     lastReadAt: selfLastReadAt,
+    // The self row is filtered out of `participants` above, so callers that need to know
+    // "can I moderate this group" (rename, avatar, add/remove members) read it from here.
+    selfRole: self?.role || 'member',
   };
 }
 
@@ -178,7 +198,26 @@ router.get('/:id', requireAuth, asyncHandler(async (req, res) => {
   }
 
   const pinnedMessage = await loadPinnedMessage(conversation);
-  res.json({ conversation: { ...serializeConversation(conversation, req.userId), pinnedMessage } });
+
+  // Block status only makes sense for a 1-1 chat — a group's other members are queried via
+  // GroupInfoModal instead, and blocking doesn't apply there.
+  let blockInfo = {};
+  if (!conversation.isGroup && !conversation.isSelf) {
+    const other = conversation.participants.find((p) => p.userId !== req.userId);
+    if (other) {
+      const [blockedByMe, blockedMe] = await Promise.all([
+        prisma.block.findUnique({
+          where: { blockerId_blockedId: { blockerId: req.userId, blockedId: other.userId } },
+        }),
+        prisma.block.findUnique({
+          where: { blockerId_blockedId: { blockerId: other.userId, blockedId: req.userId } },
+        }),
+      ]);
+      blockInfo = { blockedByMe: !!blockedByMe, blockedMe: !!blockedMe };
+    }
+  }
+
+  res.json({ conversation: { ...serializeConversation(conversation, req.userId), pinnedMessage, ...blockInfo } });
 }));
 
 // Find or create the current user's "Saved Messages" chat — a conversation with only
@@ -260,8 +299,8 @@ router.patch('/:id', requireAuth, asyncHandler(async (req, res) => {
   if (!existing.isGroup) {
     return res.status(400).json({ error: 'Only group conversations can be edited' });
   }
-  if (existing.ownerId && existing.ownerId !== req.userId) {
-    return res.status(403).json({ error: 'Only the group owner can edit it' });
+  if (!isModerator(existing, membership)) {
+    return res.status(403).json({ error: 'Only the group owner or an admin can edit it' });
   }
 
   const data = {};
@@ -409,6 +448,46 @@ router.post('/:id/participants', requireAuth, asyncHandler(async (req, res) => {
   res.json({ conversation: serializeConversation(conversation, req.userId) });
 }));
 
+// Promote/demote a group member to admin. Only the group's actual owner can appoint or
+// remove admins — an admin can moderate the group, but can't create more admins, which
+// keeps the owner as the one place responsible for who holds that trust.
+router.patch('/:id/participants/:userId/role', requireAuth, asyncHandler(async (req, res) => {
+  const { id, userId } = req.params;
+  const { role } = req.body;
+
+  const existing = await prisma.conversation.findUnique({ where: { id } });
+  if (!existing) {
+    return res.status(404).json({ error: 'Conversation not found' });
+  }
+  if (!existing.isGroup) {
+    return res.status(400).json({ error: 'Only group conversations support admin roles' });
+  }
+  if (!existing.ownerId || existing.ownerId !== req.userId) {
+    return res.status(403).json({ error: 'Only the group owner can change admin roles' });
+  }
+  if (userId === existing.ownerId) {
+    return res.status(400).json({ error: "Can't change the owner's own role" });
+  }
+  if (role !== 'admin' && role !== 'member') {
+    return res.status(400).json({ error: "role must be 'admin' or 'member'" });
+  }
+
+  const target = await prisma.conversationParticipant.findUnique({
+    where: { userId_conversationId: { userId, conversationId: id } },
+  });
+  if (!target) {
+    return res.status(404).json({ error: 'Not a participant of this conversation' });
+  }
+
+  await prisma.conversationParticipant.update({
+    where: { userId_conversationId: { userId, conversationId: id } },
+    data: { role },
+  });
+
+  getIo()?.to(`conversation:${id}`).emit('conversation:updated', { conversationId: id });
+  res.json({ ok: true });
+}));
+
 // Remove a participant from a group (or leave it yourself).
 router.delete('/:id/participants/:userId', requireAuth, asyncHandler(async (req, res) => {
   const { id, userId } = req.params;
@@ -425,13 +504,16 @@ router.delete('/:id/participants/:userId', requireAuth, asyncHandler(async (req,
   if (!existing.isGroup) {
     return res.status(400).json({ error: 'Only group conversations support removing participants' });
   }
-  // Anyone can remove themselves (leave); removing someone else requires being the owner.
-  // Groups created before ownership existed have no ownerId — leave those unrestricted
-  // rather than locking everyone out of moderating them.
+  // Anyone can remove themselves (leave); removing someone else requires being a moderator
+  // (owner or admin) — and even a moderator can never remove the actual owner.
   const isSelf = userId === req.userId;
-  const isOwner = !existing.ownerId || existing.ownerId === req.userId;
-  if (!isSelf && !isOwner) {
-    return res.status(403).json({ error: 'Only the group owner can remove other participants' });
+  if (!isSelf) {
+    if (!isModerator(existing, membership)) {
+      return res.status(403).json({ error: 'Only the group owner or an admin can remove other participants' });
+    }
+    if (existing.ownerId === userId) {
+      return res.status(403).json({ error: "Can't remove the group owner" });
+    }
   }
 
   await prisma.conversationParticipant
@@ -486,13 +568,13 @@ router.get('/:id/messages', requireAuth, asyncHandler(async (req, res) => {
         where: { conversationId: id, createdAt: { lt: target.createdAt } },
         orderBy: { createdAt: 'desc' },
         take: half,
-        include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
+        include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE, ...MENTIONS_INCLUDE },
       }),
       prisma.message.findMany({
         where: { conversationId: id, createdAt: { gte: target.createdAt } },
         orderBy: { createdAt: 'asc' },
         take: limit - half,
-        include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
+        include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE, ...MENTIONS_INCLUDE },
       }),
     ]);
 
@@ -520,7 +602,7 @@ router.get('/:id/messages', requireAuth, asyncHandler(async (req, res) => {
     },
     orderBy: { createdAt: 'desc' },
     take: limit + 1,
-    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
+    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE, ...MENTIONS_INCLUDE },
   });
 
   const hasMore = page.length > limit;
@@ -587,7 +669,7 @@ router.patch('/:id/messages/:messageId', requireAuth, asyncHandler(async (req, r
   const updated = await prisma.message.update({
     where: { id: messageId },
     data: { text: text.trim(), editedAt: new Date() },
-    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
+    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE, ...MENTIONS_INCLUDE },
   });
 
   const message = serializeMessage(updated);
@@ -615,7 +697,7 @@ router.delete('/:id/messages/:messageId', requireAuth, asyncHandler(async (req, 
   const updated = await prisma.message.update({
     where: { id: messageId },
     data: { deletedAt: new Date() },
-    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
+    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE, ...MENTIONS_INCLUDE },
   });
 
   // A deleted message can't stay pinned — clear it from the conversation and let everyone
@@ -667,7 +749,7 @@ router.post('/:id/messages/:messageId/reactions', requireAuth, asyncHandler(asyn
 
   const updated = await prisma.message.findUnique({
     where: { id: messageId },
-    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE },
+    include: { sender: MESSAGE_SENDER_INCLUDE, ...REPLY_PREVIEW_INCLUDE, ...REACTIONS_INCLUDE, ...MENTIONS_INCLUDE },
   });
 
   const message = serializeMessage(updated);

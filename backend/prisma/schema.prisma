@@ -21,6 +21,11 @@ model User {
   messages          Message[]
   pushSubscriptions PushSubscription[]
   reactions         Reaction[]
+  mentions          Mention[]
+  blocksMade        Block[]   @relation("BlocksMade")
+  blocksReceived    Block[]   @relation("BlocksReceived")
+  reportsMade       Report[]  @relation("ReportsMade")
+  reportsReceived   Report[]  @relation("ReportsReceived")
 }
 
 model Conversation {
@@ -41,6 +46,7 @@ model ConversationParticipant {
   id             String    @id @default(uuid())
   userId         String
   conversationId String
+  role           String    @default("member")
   joinedAt       DateTime  @default(now())
   lastReadAt     DateTime?
   archivedAt     DateTime?
@@ -71,6 +77,47 @@ model Message {
   replyTo      Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
   replies      Message[]    @relation("MessageReplies")
   reactions    Reaction[]
+  mentions     Mention[]
+}
+
+// Who was @mentioned in a message, referenced by userId rather than by parsing the
+// stored "@username" text at render time — a username change later shouldn't be able to
+// break (or hijack) an old mention.
+model Mention {
+  id        String   @id @default(uuid())
+  messageId String
+  userId    String
+  createdAt DateTime @default(now())
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([messageId, userId])
+}
+
+// A one-way block: blockerId no longer receives messages from blockedId (and vice versa,
+// enforced in message:send) and won't see them in search/new-chat.
+model Block {
+  id        String   @id @default(uuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker User @relation("BlocksMade", fields: [blockerId], references: [id])
+  blocked User @relation("BlocksReceived", fields: [blockedId], references: [id])
+
+  @@unique([blockerId, blockedId])
+}
+
+model Report {
+  id         String   @id @default(uuid())
+  reporterId String
+  reportedId String
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  reporter User @relation("ReportsMade", fields: [reporterId], references: [id])
+  reported User @relation("ReportsReceived", fields: [reportedId], references: [id])
 }
 
 model Reaction {
