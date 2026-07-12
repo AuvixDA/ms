@@ -91,6 +91,34 @@ body {
   margin: 0;
   background: var(--color-surface-950);
   color-scheme: dark;
+  /* Disables the double-tap-to-zoom delay/gesture so taps feel instant like a native app.
+     Pinch-zoom is additionally blocked via the viewport meta + gesturestart handler. */
+  touch-action: manipulation;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* On phones/tablets the app should behave like a native messenger: long-pressing must not
+   trigger the browser's text-selection handles and "Copy" callout (messages have their own
+   long-press action menu). Form fields opt back in so typing, selecting and editing still
+   work. Desktop (fine pointer) keeps normal text selection. */
+@media (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  input,
+  textarea,
+  select,
+  [contenteditable="true"] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
 }
 
 /* ── Component surface tokens (dark defaults) ──────────────────────────────
